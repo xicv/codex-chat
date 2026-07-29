@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-chat.invalid/schemas/collab-delivery-receipt-v2.schema.json",
+  "title": "COLLAB_DELIVERY_RECEIPT_V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "protocolVersion",
+    "slotId",
+    "planSha256",
+    "manifestSha256",
+    "manifestPlanSha256",
+    "runId",
+    "expectedEventSequence",
+    "expectedEventHash",
+    "contextSha256",
+    "routing",
+    "conversationIdentity",
+    "turnId",
+    "transport",
+    "locator",
+    "observedAt",
+    "evidenceClass",
+    "provider",
+    "evidence",
+    "representation",
+    "receiptId"
+  ],
+  "properties": {
+    "kind": { "const": "COLLAB_DELIVERY_RECEIPT_V2" },
+    "protocolVersion": { "const": 2 },
+    "slotId": { "$ref": "#/$defs/sha256" },
+    "planSha256": { "$ref": "#/$defs/sha256" },
+    "manifestSha256": { "$ref": "#/$defs/sha256" },
+    "manifestPlanSha256": { "$ref": "#/$defs/sha256" },
+    "runId": { "$ref": "#/$defs/id" },
+    "expectedEventSequence": { "type": "integer", "minimum": 1 },
+    "expectedEventHash": { "$ref": "#/$defs/sha256" },
+    "contextSha256": { "$ref": "#/$defs/sha256" },
+    "routing": { "$ref": "#/$defs/routing" },
+    "conversationIdentity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "turnId": { "$ref": "#/$defs/id" },
+    "transport": { "$ref": "#/$defs/id" },
+    "locator": { "$ref": "#/$defs/locator" },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "evidenceClass": { "$ref": "#/$defs/id" },
+    "provider": { "$ref": "#/$defs/provider" },
+    "evidence": { "$ref": "#/$defs/evidence" },
+    "representation": { "$ref": "#/$defs/representation" },
+    "receiptId": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId",
+        "coordinatorId",
+        "workUnitId",
+        "agentId"
+      ],
+      "properties": {
+        "workspaceId": { "$ref": "#/$defs/id" },
+        "coordinatorId": { "$ref": "#/$defs/id" },
+        "workUnitId": { "$ref": "#/$defs/id" },
+        "agentId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "$ref": "#/$defs/id" },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
+    "nullableProviderId": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1, "maxLength": 1024 }
+      ]
+    },
+    "nullableSha256": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/sha256" }
+      ]
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "messageId",
+        "attachmentId",
+        "messageFingerprint",
+        "attachmentFingerprint"
+      ],
+      "properties": {
+        "namespace": { "$ref": "#/$defs/id" },
+        "messageId": { "$ref": "#/$defs/nullableProviderId" },
+        "attachmentId": { "$ref": "#/$defs/nullableProviderId" },
+        "messageFingerprint": { "$ref": "#/$defs/nullableSha256" },
+        "attachmentFingerprint": { "$ref": "#/$defs/nullableSha256" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sha256", "bytes"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "exact-payload",
+            "inline-text",
+            "provider-metadata",
+            "ui-capture"
+          ]
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10485760
+        }
+      }
+    },
+    "representation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "representationId",
+        "representationSha256",
+        "representationBytes",
+        "modality",
+        "mediaType",
+        "fidelity",
+        "attachmentOrdinal",
+        "declaredBytes",
+        "declaredDetail",
+        "deliveryStatus",
+        "modelVisible"
+      ],
+      "properties": {
+        "representationId": { "$ref": "#/$defs/id" },
+        "representationSha256": { "$ref": "#/$defs/sha256" },
+        "representationBytes": { "type": "integer", "minimum": 0 },
+        "modality": {
+          "enum": [
+            "code",
+            "text",
+            "image",
+            "pdf",
+            "document",
+            "spreadsheet",
+            "data"
+          ]
+        },
+        "mediaType": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$"
+        },
+        "fidelity": { "enum": ["exact", "lossless", "lossy"] },
+        "attachmentOrdinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "declaredBytes": { "type": "integer", "minimum": 0 },
+        "declaredDetail": {
+          "enum": [
+            "not-applicable",
+            "original",
+            "low",
+            "high",
+            "auto",
+            "provider-default"
+          ]
+        },
+        "deliveryStatus": { "enum": ["accepted", "rejected"] },
+        "modelVisible": { "const": "unknown" }
+      }
+    }
+  }
+}

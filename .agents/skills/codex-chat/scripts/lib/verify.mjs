@@ -40,6 +40,7 @@ const SHELL_EXECUTABLES = new Set([
   "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh",
   "pwsh", "powershell", "cmd", "cmd.exe",
 ]);
+const ROUTING_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 function stable(value) {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
@@ -96,6 +97,37 @@ function parsePlan(contents) {
       ) {
         fail("VERIFY_ENV_REJECTED", `Unsafe verification environment key: ${key}`);
       }
+    }
+  }
+  if (plan.bindings !== undefined) {
+    const bindings = plan.bindings;
+    const routeFields = [
+      "runId",
+      "turnId",
+      "workspaceId",
+      "coordinatorId",
+      "workUnitId",
+      "agentId",
+      "gateId",
+    ];
+    if (
+      !bindings ||
+      typeof bindings !== "object" ||
+      Array.isArray(bindings) ||
+      routeFields.some((key) => !ROUTING_ID.test(bindings[key] ?? "")) ||
+      !/^[a-f0-9]{64}$/.test(bindings.contextSha256 ?? "") ||
+      !/^[a-f0-9]{64}$/.test(bindings.applicationKey ?? "") ||
+      !/^[a-f0-9]{64}$/.test(bindings.postimageSha256 ?? "") ||
+      Object.keys(bindings).some((key) =>
+        !new Set([
+          ...routeFields,
+          "contextSha256",
+          "applicationKey",
+          "postimageSha256",
+        ]).has(key)
+      )
+    ) {
+      fail("VERIFY_PLAN_INVALID", "Verification bindings are incomplete or invalid.");
     }
   }
   return plan;
@@ -185,6 +217,15 @@ async function writeImmutable(filePath, contents) {
   });
   try {
     await handle.writeFile(contents);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function syncDirectory(directory) {
+  const handle = await open(directory, "r");
+  try {
     await handle.sync();
   } finally {
     await handle.close();
@@ -306,13 +347,13 @@ export async function runVerification({
     }, plan.timeoutMs);
 
     function collect(target, chunk) {
+      const remaining = Math.max(0, MAX_OUTPUT_BYTES - outputBytes);
+      if (remaining > 0) target.push(chunk.subarray(0, remaining));
       outputBytes += chunk.byteLength;
-      if (outputBytes > MAX_OUTPUT_BYTES) {
+      if (outputBytes > MAX_OUTPUT_BYTES && !outputLimited) {
         outputLimited = true;
         terminate();
-        return;
       }
-      target.push(chunk);
     }
     child.stdout.on("data", (chunk) => collect(stdout, chunk));
     child.stderr.on("data", (chunk) => collect(stderr, chunk));
@@ -329,6 +370,7 @@ export async function runVerification({
         signal,
         timedOut,
         outputLimited,
+        observedOutputBytes: outputBytes,
         stdout: Buffer.concat(stdout),
         stderr: Buffer.concat(stderr),
       });
@@ -337,13 +379,20 @@ export async function runVerification({
     fail("VERIFY_EXEC_FAILED", `Verification command could not start: ${error.message}`);
   });
 
-  if (execution.outputLimited) {
-    fail("VERIFY_OUTPUT_LIMIT", `Verification output exceeds ${MAX_OUTPUT_BYTES} bytes.`);
-  }
   const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
   const finishedAt = new Date().toISOString();
   const stdoutSha256 = sha256(execution.stdout);
   const stderrSha256 = sha256(execution.stderr);
+  const classification =
+    execution.outputLimited
+      ? "output_limited"
+      : execution.timedOut
+        ? "timed_out"
+        : execution.signal
+          ? "signaled"
+          : execution.exitCode === 0
+            ? "success"
+            : "failed";
   const receipt = {
     kind: "CODEX_CHAT_VERIFY_RECEIPT_V1",
     protocolVersion: 1,
@@ -356,14 +405,19 @@ export async function runVerification({
     cwd: canonicalCwd,
     argv: plan.argv,
     evidenceClass: plan.evidenceClass,
+    bindings: plan.bindings ?? null,
+    classification,
     startedAt,
     finishedAt,
     durationMs,
     exitCode: execution.exitCode,
     signal: execution.signal,
     timedOut: execution.timedOut,
+    outputLimited: execution.outputLimited,
+    observedOutputBytes: execution.observedOutputBytes,
     stdoutBytes: execution.stdout.byteLength,
     stderrBytes: execution.stderr.byteLength,
+    outputTruncated: execution.outputLimited,
     stdoutSha256,
     stderrSha256,
   };
@@ -375,6 +429,7 @@ export async function runVerification({
   await writeImmutable(stdoutPath, execution.stdout);
   await writeImmutable(stderrPath, execution.stderr);
   await writeImmutable(receiptPath, `${stable({ ...receipt, executionDigest })}\n`);
+  await syncDirectory(absoluteEvidence);
 
   return {
     executionDigest,
@@ -387,9 +442,14 @@ export async function runVerification({
     cwd: canonicalCwd,
     argv: plan.argv,
     evidenceClass: plan.evidenceClass,
+    bindings: plan.bindings ?? null,
+    classification,
     exitCode: execution.exitCode,
     signal: execution.signal,
     timedOut: execution.timedOut,
+    outputLimited: execution.outputLimited,
+    observedOutputBytes: execution.observedOutputBytes,
+    outputTruncated: execution.outputLimited,
     durationMs,
     stdoutPath,
     stderrPath,

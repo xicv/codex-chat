@@ -22,6 +22,44 @@
     "env": {
       "type": "object",
       "additionalProperties": { "type": "string" }
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "turnId",
+        "contextSha256",
+        "workspaceId",
+        "coordinatorId",
+        "workUnitId",
+        "agentId",
+        "gateId",
+        "applicationKey",
+        "postimageSha256"
+      ],
+      "properties": {
+        "runId": { "$ref": "#/$defs/id" },
+        "turnId": { "$ref": "#/$defs/id" },
+        "contextSha256": { "$ref": "#/$defs/sha256" },
+        "workspaceId": { "$ref": "#/$defs/id" },
+        "coordinatorId": { "$ref": "#/$defs/id" },
+        "workUnitId": { "$ref": "#/$defs/id" },
+        "agentId": { "$ref": "#/$defs/id" },
+        "gateId": { "$ref": "#/$defs/id" },
+        "applicationKey": { "$ref": "#/$defs/sha256" },
+        "postimageSha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
     }
   }
 }

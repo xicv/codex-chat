@@ -12,6 +12,11 @@ export const LIMITS_V1 = Object.freeze({
     maxHunks: 64,
     maxPostimageBytes: 256 * 1024,
   }),
+  scanner: Object.freeze({
+    maxProcessMs: 5_000,
+    maxOutputBytes: 128 * 1024,
+    killGraceMs: 500,
+  }),
   verify: Object.freeze({
     maxPlanBytes: 32 * 1024,
     maxArgvItems: 64,
@@ -23,5 +28,23 @@ export const LIMITS_V1 = Object.freeze({
     maxEventDataBytes: 64 * 1024,
     maxIdempotencyKeyBytes: 256,
     retainedIdempotencyKeys: 128,
+  }),
+});
+
+export const LIMITS_V2 = Object.freeze({
+  manifest: Object.freeze({
+    maxPlanBytes: 128 * 1024,
+    maxRepresentations: 64,
+    maxRepresentationBytes: 10 * 1024 * 1024,
+    maxTotalBytes: 50 * 1024 * 1024,
+    maxArtifactBytes: 512 * 1024,
+  }),
+  delivery: Object.freeze({
+    maxManifestBytes: 512 * 1024,
+    maxPlanBytes: 64 * 1024,
+    maxEvidenceBytes: 10 * 1024 * 1024,
+    maxRepresentations: 64,
+    maxArtifactBytes: 64 * 1024,
+    maxProviderIdBytes: 1024,
   }),
 });

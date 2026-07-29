@@ -8,6 +8,8 @@ import { parseArgs, required } from "./lib/args.mjs";
 import { CodexChatError } from "./lib/errors.mjs";
 import { preflight } from "./lib/preflight.mjs";
 import { packContext } from "./lib/pack.mjs";
+import { createContextManifest } from "./lib/context-manifest.mjs";
+import { createDeliveryReceipt } from "./lib/delivery-receipt.mjs";
 import { importResult, parseResultEnvelope } from "./lib/import.mjs";
 import { loadRun, recordEvent } from "./lib/state.mjs";
 import { runVerification } from "./lib/verify.mjs";
@@ -17,6 +19,8 @@ const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const COMMANDS = [
   "preflight",
   "pack",
+  "manifest",
+  "delivery-receipt",
   "record",
   "status",
   "resume",
@@ -103,24 +107,53 @@ async function main() {
     return;
   }
   if (command === "pack") {
+    if (
+      Object.hasOwn(options, "max-file-bytes") ||
+      Object.hasOwn(options, "max-total-bytes")
+    ) {
+      throw new CodexChatError(
+        "LIMIT_OVERRIDE_FORBIDDEN",
+        "Installed CLI packing limits are fixed by protocol v1.",
+      );
+    }
     const root = required(options, "root");
     const result = await packContext({
       root,
       includes: options.include,
       output: required(options, "output"),
       scanner: "gitleaks",
-      ...(options["max-file-bytes"]
-        ? { maxFileBytes: Number(options["max-file-bytes"]) }
-        : {}),
-      ...(options["max-total-bytes"]
-        ? { maxTotalBytes: Number(options["max-total-bytes"]) }
-        : {}),
     });
     emitSuccess(command, {
       root: path.resolve(root),
       stateDir: path.resolve(stateDir),
       ...result,
     });
+    return;
+  }
+  if (command === "manifest") {
+    emitSuccess(
+      command,
+      await createContextManifest({
+        root: required(options, "root"),
+        planPath: required(options, "plan"),
+        output: required(options, "output"),
+        scanner: "gitleaks",
+      }),
+    );
+    return;
+  }
+  if (command === "delivery-receipt") {
+    emitSuccess(
+      command,
+      await createDeliveryReceipt({
+        stateDir,
+        runId: required(options, "run-id"),
+        manifestPath: required(options, "manifest"),
+        planPath: required(options, "plan"),
+        evidencePath: required(options, "evidence"),
+        scanner: "gitleaks",
+      }),
+    );
     return;
   }
   if (command === "record") {
@@ -209,6 +242,7 @@ async function main() {
           : null,
       sourceRoot: state.sourceRoot,
       quarantineDir: path.join(path.resolve(stateDir), runId, "quarantine"),
+      targetLockDir: path.join(path.resolve(stateDir), ".target-locks"),
       allowedPaths:
         envelope.artifactKind === "patch"
           ? options.include

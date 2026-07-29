@@ -195,6 +195,88 @@ test("outbound reservations require durable metadata and permanent idempotency",
   );
 });
 
+test("coordinated runs reject crossed agent and coordinator confirmations", async () => {
+  const stateDir = await tempDir();
+  const runId = "run-routing-isolation";
+  const routing = {
+    workspaceId: "workspace-1",
+    coordinatorId: "coordinator-1",
+    workUnitId: "work-unit-1",
+  };
+  const outboundRouting = { ...routing, agentId: "agent-1" };
+  await recordEvent({
+    stateDir,
+    runId,
+    event: "prepared",
+    data: {
+      contextSha256: "c".repeat(64),
+      sourceRoot: "/tmp/source",
+      routing,
+      requiredGates: ["unit"],
+    },
+    expectedSequence: 0,
+    expectedState: null,
+  });
+  await recordEvent({
+    stateDir,
+    runId,
+    event: "send_reserved",
+    data: {
+      turnId: "turn-1",
+      marker: "VISIBLE_ROUTED_MARKER",
+      expectedTerminalMarker: "TERMINAL_ROUTED_MARKER",
+      payloadSha256: "c".repeat(64),
+      conversationIdentity: "conversation-routed",
+      routing: outboundRouting,
+    },
+    expectedSequence: 1,
+    expectedState: "prepared",
+    idempotencyKey: "routed-reservation",
+  });
+
+  const confirmation = {
+    turnId: "turn-1",
+    marker: "VISIBLE_ROUTED_MARKER",
+    conversationIdentity: "conversation-routed",
+    conversationUrl: "https://chatgpt.com/c/routed",
+    routing: outboundRouting,
+    transportKind: "native-bridge",
+    observedAt: "2026-07-29T00:00:00.000Z",
+    confirmationEvidenceClass: "thread-id-observation",
+    providerMessageFingerprint: null,
+    locator: { type: "thread-id", value: "conversation-routed" },
+  };
+  await assert.rejects(
+    recordEvent({
+      stateDir,
+      runId,
+      event: "send_confirmed",
+      data: {
+        ...confirmation,
+        routing: { ...outboundRouting, coordinatorId: "coordinator-2" },
+      },
+      expectedSequence: 2,
+      expectedState: "send_reserved",
+      idempotencyKey: "wrong-coordinator",
+    }),
+    (error) => error.code === "SEND_CONFIRMATION_EVIDENCE_INVALID",
+  );
+  const confirmed = await recordEvent({
+    stateDir,
+    runId,
+    event: "send_confirmed",
+    data: confirmation,
+    expectedSequence: 2,
+    expectedState: "send_reserved",
+    idempotencyKey: "routed-confirmation",
+  });
+  assert.deepEqual(confirmed.state.outbound.routing, outboundRouting);
+  assert.equal(
+    confirmed.state.outbound.confirmationEvidence.locator.value,
+    "conversation-routed",
+  );
+});
+
 test("idempotency keys bind event type and canonical data while markers remain unique", async () => {
   const stateDir = await tempDir();
   const runId = "run-idempotency-binding";
@@ -378,4 +460,55 @@ test("terminal responses are bound to the active outbound turn and expected mark
   });
   assert.equal(revision.state.collaboration.terminalMarker, null);
   assert.equal(revision.state.collaboration.responseBinding, null);
+});
+
+test("legacy acceptance remains valid JSON without coordinated gate metadata", async () => {
+  const stateDir = await tempDir();
+  const runId = "legacy-acceptance";
+  const events = [
+    ["prepared", {
+      contextSha256: "a".repeat(64),
+      sourceRoot: "/tmp/source",
+    }, null],
+    ["send_reserved", {
+      turnId: "turn-legacy",
+      marker: "VISIBLE_LEGACY",
+      expectedTerminalMarker: "TERMINAL_LEGACY",
+      payloadSha256: "a".repeat(64),
+      conversationIdentity: "conversation-legacy",
+    }, "legacy-reserved"],
+    ["send_confirmed", {
+      turnId: "turn-legacy",
+    }, "legacy-confirmed"],
+    ["response_terminal", {
+      turnId: "turn-legacy",
+      terminalMarker: "TERMINAL_LEGACY",
+      responseSha256: "b".repeat(64),
+      resultEnvelopeSha256: "c".repeat(64),
+      conversationIdentity: "conversation-legacy",
+    }, null],
+    ["review_started", {}, null],
+    ["validation_started", {}, null],
+    ["accepted", {}, null],
+  ];
+  let phase = null;
+  for (const [sequence, [event, data, idempotencyKey]] of events.entries()) {
+    const result = await recordEvent({
+      stateDir,
+      runId,
+      event,
+      data,
+      idempotencyKey,
+      expectedSequence: sequence,
+      expectedState: phase,
+    });
+    phase = result.state.phase;
+  }
+
+  const persisted = JSON.parse(
+    await readFile(statePaths(stateDir, runId).state, "utf8"),
+  );
+  assert.equal(persisted.phase, "accepted");
+  assert.equal(persisted.verificationSetSha256, null);
+  assert.equal((await loadRun({ stateDir, runId })).phase, "accepted");
 });

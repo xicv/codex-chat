@@ -106,7 +106,9 @@ export async function preflight({
   if (!rootInfo?.isDirectory()) {
     fail("ROOT_INVALID", `Root is not a directory: ${absoluteRoot}`);
   }
-  const include = await validateIncludes(absoluteRoot, includes);
+  const include = await validateIncludes(absoluteRoot, includes, {
+    filesOnly: true,
+  });
 
   await mkdir(absoluteStateDir, { recursive: true, mode: 0o700 });
   const stateInfo = await lstat(absoluteStateDir).catch(() => null);

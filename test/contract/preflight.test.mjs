@@ -76,3 +76,19 @@ test("preflight rejects a symlinked state directory", async () => {
   assert.equal(result.code, 2);
   assert.equal(result.json.error.code, "STATE_DIR_INVALID");
 });
+
+test("preflight rejects directories before packing", async () => {
+  const root = await tempDir();
+  const stateDir = await tempDir();
+  await writeFixture(root, "src/source.txt", "safe\n");
+
+  const result = await runCli([
+    "preflight",
+    "--root", root,
+    "--include", "src",
+    "--state-dir", stateDir,
+  ]);
+
+  assert.equal(result.code, 2);
+  assert.equal(result.json.error.code, "EXPLICIT_FILE_REQUIRED");
+});

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   chmod,
+  constants,
   lstat,
   mkdir,
   open,
@@ -12,6 +13,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { fail } from "./errors.mjs";
+import { withOwnedFileLock } from "./file-lock.mjs";
 import { validateRelativePath } from "./preflight.mjs";
 import { scanDirectory } from "./scanner.mjs";
 import { LIMITS_V1 } from "./limits.mjs";
@@ -262,6 +264,37 @@ async function atomicWrite(target, contents, mode, expectedParent = null) {
   }
 }
 
+async function inspectTargetNoFollow(target, relativePath) {
+  let handle;
+  try {
+    handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if (error.code === "ELOOP") {
+      fail("SYMLINK_REJECTED", `Patch target became a symbolic link: ${relativePath}`);
+    }
+    throw error;
+  }
+  try {
+    const [info, bytes] = await Promise.all([handle.stat(), handle.readFile()]);
+    if (!info.isFile()) {
+      fail("PATCH_TARGET_INVALID", `Patch target is not a regular file: ${relativePath}`);
+    }
+    return {
+      bytes,
+      dev: info.dev,
+      ino: info.ino,
+      mode: info.mode,
+      sha256: sha256(bytes),
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+function sameTargetIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
 function isWithin(root, target) {
   return target === root || target.startsWith(`${root}${path.sep}`);
 }
@@ -281,6 +314,41 @@ async function inspectRoot(root, label) {
     path: canonical,
     dev: identity.dev,
     ino: identity.ino,
+    digest: sha256(stable({
+      path: canonical,
+      dev: identity.dev,
+      ino: identity.ino,
+    })),
+  };
+}
+
+async function inspectTargetLockRoot(lockRoot, source, scratchRoot) {
+  if (typeof lockRoot !== "string" || !path.isAbsolute(lockRoot)) {
+    fail("TARGET_LOCK_ROOT_INVALID", "Target lock root must be an absolute directory.");
+  }
+  const requested = path.resolve(lockRoot);
+  if (isWithin(source.path, requested) || isWithin(scratchRoot.path, requested)) {
+    fail(
+      "TARGET_LOCK_CONFINEMENT",
+      "Target lock root must be outside source and scratch roots.",
+    );
+  }
+  await mkdir(requested, { recursive: true, mode: 0o700 });
+  const info = await lstat(requested).catch(() => null);
+  if (!info?.isDirectory() || info.isSymbolicLink()) {
+    fail("TARGET_LOCK_ROOT_INVALID", "Target lock root must be a real directory.");
+  }
+  await chmod(requested, 0o700);
+  const canonical = await realpath(requested);
+  if (isWithin(source.path, canonical) || isWithin(scratchRoot.path, canonical)) {
+    fail(
+      "TARGET_LOCK_CONFINEMENT",
+      "Resolved target lock root must be outside source and scratch roots.",
+    );
+  }
+  const identity = await stat(canonical);
+  return {
+    path: canonical,
     digest: sha256(stable({
       path: canonical,
       dev: identity.dev,
@@ -385,6 +453,7 @@ export async function importResult({
   scratch,
   sourceRoot,
   quarantineDir,
+  targetLockDir = null,
   allowedPaths,
   expectedRunId,
   expectedTurnId,
@@ -392,6 +461,8 @@ export async function importResult({
   scanner = "gitleaks",
   testMode = false,
   crashAfterTarget = false,
+  testAfterTargetLock = null,
+  testBeforeFinalCompare = null,
 }) {
   const validated = parseResultEnvelope(stable(envelope));
   if (
@@ -490,6 +561,11 @@ export async function importResult({
     fail("SCRATCH_CONFINEMENT_INVALID", "Scratch and source roots must be separate, non-nested directories.");
   }
   const absoluteScratch = scratchRoot.path;
+  const targetLockRoot = await inspectTargetLockRoot(
+    targetLockDir,
+    source,
+    scratchRoot,
+  );
   const quarantine = await quarantineEnvelope({
     validated,
     source,
@@ -504,99 +580,165 @@ export async function importResult({
     quarantined,
     scan,
   } = quarantine;
-
-  const marker = path.join(absoluteQuarantine, `${applicationKey}.imported.json`);
-  const preparedMarker = path.join(absoluteQuarantine, `${applicationKey}.prepared.json`);
-  const existingMarker = await readReceipt(marker);
-  const target = path.join(absoluteScratch, parsed.path);
-  await assertNoSymlinkPath(absoluteScratch, parsed.path);
-  const canonicalTarget = await realpath(target);
-  if (!isWithin(absoluteScratch, canonicalTarget)) {
-    fail("SCRATCH_ESCAPE", `Resolved target escapes the authorised scratch: ${parsed.path}`);
-  }
-  const info = await lstat(target);
-  if (!info.isFile()) {
-    fail("PATCH_TARGET_INVALID", `Patch target is not a regular file: ${parsed.path}`);
-  }
-  const beforeBytes = await readFile(target);
-  const before = decodeSource(beforeBytes, parsed.path);
-  const currentSha256 = sha256(beforeBytes);
-  if (existingMarker) {
-    if (
-      existingMarker.applicationKey !== applicationKey ||
-      existingMarker.runId !== validated.runId ||
-      existingMarker.turnId !== validated.turnId ||
-      existingMarker.contextSha256 !== validated.contextSha256
-    ) {
-      fail("IMPORT_RECEIPT_CONFLICT", "Applied receipt does not match this application.");
-    }
-    if (currentSha256 !== existingMarker.outputSha256) {
-      fail("IDEMPOTENCY_CONFLICT", "Imported target changed after the recorded import.");
-    }
-    return { ...existingMarker, idempotent: true, quarantined, scanner: scan };
-  }
-  const prepared = await readReceipt(preparedMarker);
-  if (prepared) {
-    if (
-      prepared.path !== parsed.path ||
-      prepared.runId !== validated.runId ||
-      prepared.turnId !== validated.turnId ||
-      prepared.contextSha256 !== validated.contextSha256 ||
-      prepared.sourceIdentity !== source.digest ||
-      prepared.scratchIdentity !== scratchRoot.digest ||
-      prepared.applicationKey !== applicationKey ||
-      prepared.inputSha256 !== preimage.sha256 ||
-      prepared.patchSha256 !== validated.patch.sha256
-    ) {
-      fail("IMPORT_RECEIPT_CONFLICT", "Prepared receipt does not match this result.");
-    }
-    if (currentSha256 === prepared.outputSha256) {
-      await atomicWrite(marker, `${stable(prepared)}\n`, 0o600);
-      return {
-        ...prepared,
-        idempotent: true,
-        recovered: true,
-        quarantined,
-        scanner: scan,
-      };
-    }
-    if (currentSha256 !== prepared.inputSha256) {
-      fail("IDEMPOTENCY_CONFLICT", "Target matches neither prepared preimage nor postimage.");
-    }
-  } else if (currentSha256 !== preimage.sha256) {
-    fail("PREIMAGE_STALE", `Patch preimage is stale: ${parsed.path}`);
-  }
-
-  const after = applyHunks(before, parsed);
-  const result = {
-    runId: validated.runId,
-    turnId: validated.turnId,
-    contextSha256: validated.contextSha256,
-    path: parsed.path,
-    sourceIdentity: source.digest,
+  const targetLockKey = sha256(stable({
+    kind: "CODEX_CHAT_IMPORT_TARGET_LOCK_V1",
     scratchIdentity: scratchRoot.digest,
-    applicationKey,
-    inputSha256: preimage.sha256,
-    outputSha256: sha256(after),
-    patchSha256: validated.patch.sha256,
-  };
-  if (prepared && prepared.outputSha256 !== result.outputSha256) {
-    fail("IMPORT_RECEIPT_CONFLICT", "Prepared postimage differs from the computed patch.");
-  }
-  if (!prepared) {
-    await atomicWrite(preparedMarker, `${stable(result)}\n`, 0o600);
-  }
-  const targetParent = await stat(path.dirname(target));
-  await atomicWrite(target, after, info.mode & 0o777, targetParent);
-  if (crashAfterTarget) {
-    fail("SIMULATED_CRASH", "Simulated crash after target replacement.");
-  }
-  await atomicWrite(marker, `${stable(result)}\n`, 0o600);
-  return {
-    ...result,
-    idempotent: false,
-    recovered: prepared !== null,
-    quarantined,
-    scanner: scan,
-  };
+    path: parsed.path,
+  }));
+  const targetLockPath = path.join(
+    targetLockRoot.path,
+    `${targetLockKey}.lock`,
+  );
+  return withOwnedFileLock({
+    lockPath: targetLockPath,
+    busyCode: "TARGET_BUSY",
+    busyMessage: `Another import holds the target lock: ${parsed.path}`,
+  }, async () => {
+    if (testAfterTargetLock) await testAfterTargetLock();
+    const marker = path.join(absoluteQuarantine, `${applicationKey}.imported.json`);
+    const preparedMarker = path.join(absoluteQuarantine, `${applicationKey}.prepared.json`);
+    const existingMarker = await readReceipt(marker);
+    const target = path.join(absoluteScratch, parsed.path);
+    await assertNoSymlinkPath(absoluteScratch, parsed.path);
+    const canonicalTarget = await realpath(target);
+    if (!isWithin(absoluteScratch, canonicalTarget)) {
+      fail("SCRATCH_ESCAPE", `Resolved target escapes the authorised scratch: ${parsed.path}`);
+    }
+    const initialTarget = await inspectTargetNoFollow(target, parsed.path);
+    const before = decodeSource(initialTarget.bytes, parsed.path);
+    const currentSha256 = initialTarget.sha256;
+    const initialTargetIdentity = sha256(stable({
+      dev: initialTarget.dev,
+      ino: initialTarget.ino,
+    }));
+    if (existingMarker) {
+      if (
+        existingMarker.applicationKey !== applicationKey ||
+        existingMarker.runId !== validated.runId ||
+        existingMarker.turnId !== validated.turnId ||
+        existingMarker.contextSha256 !== validated.contextSha256 ||
+        (existingMarker.targetLockKey &&
+          existingMarker.targetLockKey !== targetLockKey) ||
+        (
+          existingMarker.targetLockNamespace &&
+          existingMarker.targetLockNamespace !== targetLockRoot.digest
+        )
+      ) {
+        fail("IMPORT_RECEIPT_CONFLICT", "Applied receipt does not match this application.");
+      }
+      if (currentSha256 !== existingMarker.outputSha256) {
+        fail("IDEMPOTENCY_CONFLICT", "Imported target changed after the recorded import.");
+      }
+      if (
+        existingMarker.appliedTargetIdentity &&
+        existingMarker.appliedTargetIdentity !== initialTargetIdentity
+      ) {
+        fail("IDEMPOTENCY_CONFLICT", "Imported target identity changed after the recorded import.");
+      }
+      return { ...existingMarker, idempotent: true, quarantined, scanner: scan };
+    }
+    const prepared = await readReceipt(preparedMarker);
+    if (prepared) {
+      if (
+        prepared.path !== parsed.path ||
+        prepared.runId !== validated.runId ||
+        prepared.turnId !== validated.turnId ||
+        prepared.contextSha256 !== validated.contextSha256 ||
+        prepared.sourceIdentity !== source.digest ||
+        prepared.scratchIdentity !== scratchRoot.digest ||
+        prepared.applicationKey !== applicationKey ||
+        prepared.inputSha256 !== preimage.sha256 ||
+        prepared.patchSha256 !== validated.patch.sha256 ||
+        (prepared.targetLockKey && prepared.targetLockKey !== targetLockKey) ||
+        (
+          prepared.targetLockNamespace &&
+          prepared.targetLockNamespace !== targetLockRoot.digest
+        )
+      ) {
+        fail("IMPORT_RECEIPT_CONFLICT", "Prepared receipt does not match this result.");
+      }
+      if (currentSha256 === prepared.outputSha256) {
+        const applied = {
+          ...prepared,
+          targetLockKey,
+          targetLockNamespace: targetLockRoot.digest,
+          appliedTargetIdentity: initialTargetIdentity,
+        };
+        await atomicWrite(marker, `${stable(applied)}\n`, 0o600);
+        return {
+          ...applied,
+          idempotent: true,
+          recovered: true,
+          quarantined,
+          scanner: scan,
+        };
+      }
+      if (currentSha256 !== prepared.inputSha256) {
+        fail("IDEMPOTENCY_CONFLICT", "Target matches neither prepared preimage nor postimage.");
+      }
+    } else if (currentSha256 !== preimage.sha256) {
+      fail("PREIMAGE_STALE", `Patch preimage is stale: ${parsed.path}`);
+    }
+
+    const after = applyHunks(before, parsed);
+    const result = prepared ?? {
+      runId: validated.runId,
+      turnId: validated.turnId,
+      contextSha256: validated.contextSha256,
+      path: parsed.path,
+      sourceIdentity: source.digest,
+      scratchIdentity: scratchRoot.digest,
+      applicationKey,
+      targetLockKey,
+      targetLockNamespace: targetLockRoot.digest,
+      inputSha256: preimage.sha256,
+      outputSha256: sha256(after),
+      patchSha256: validated.patch.sha256,
+      preimageTargetIdentity: initialTargetIdentity,
+    };
+    if (result.outputSha256 !== sha256(after)) {
+      fail("IMPORT_RECEIPT_CONFLICT", "Prepared postimage differs from the computed patch.");
+    }
+    if (!prepared) {
+      await atomicWrite(preparedMarker, `${stable(result)}\n`, 0o600);
+    }
+
+    if (testBeforeFinalCompare) await testBeforeFinalCompare();
+    const finalTarget = await inspectTargetNoFollow(target, parsed.path);
+    if (
+      !sameTargetIdentity(initialTarget, finalTarget) ||
+      finalTarget.sha256 !== result.inputSha256
+    ) {
+      fail(
+        "PREIMAGE_CHANGED_DURING_IMPORT",
+        `Patch target changed after validation and before replacement: ${parsed.path}`,
+      );
+    }
+    const targetParent = await stat(path.dirname(target));
+    await atomicWrite(target, after, finalTarget.mode & 0o777, targetParent);
+    if (crashAfterTarget) {
+      fail("SIMULATED_CRASH", "Simulated crash after target replacement.");
+    }
+    const appliedTarget = await inspectTargetNoFollow(target, parsed.path);
+    if (appliedTarget.sha256 !== result.outputSha256) {
+      fail("POSTIMAGE_MISMATCH", `Patch postimage was not durably installed: ${parsed.path}`);
+    }
+    const applied = {
+      ...result,
+      targetLockKey,
+      targetLockNamespace: targetLockRoot.digest,
+      appliedTargetIdentity: sha256(stable({
+        dev: appliedTarget.dev,
+        ino: appliedTarget.ino,
+      })),
+    };
+    await atomicWrite(marker, `${stable(applied)}\n`, 0o600);
+    return {
+      ...applied,
+      idempotent: false,
+      recovered: prepared !== null,
+      quarantined,
+      scanner: scan,
+    };
+  });
 }

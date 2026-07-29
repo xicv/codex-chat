@@ -9,7 +9,10 @@ import {
   statePaths,
 } from "../../.agents/skills/codex-chat/scripts/lib/state.mjs";
 import { runCli, tempDir, writeFixture } from "../helpers.mjs";
-import { LIMITS_V1 } from "../../.agents/skills/codex-chat/scripts/lib/limits.mjs";
+import {
+  LIMITS_V1,
+  LIMITS_V2,
+} from "../../.agents/skills/codex-chat/scripts/lib/limits.mjs";
 
 const schemaDir = path.resolve(
   ".agents/skills/codex-chat/references/schemas",
@@ -31,6 +34,30 @@ test("normative JSON schemas are valid and expose the v1 required fields", async
       "kind", "protocolVersion", "runId", "turnId", "contextSha256",
       "complete", "artifactKind", "summary", "claims",
     ],
+    "collab-context-manifest-v2.schema.json": [
+      "kind", "protocolVersion", "rootLabel", "planSha256", "routing",
+      "checkpointNamespace", "parent", "checkpoint", "representations",
+    ],
+    "manifest-plan-v2.schema.json": [
+      "kind", "protocolVersion", "routing", "checkpointNamespace", "parent",
+      "checkpoint", "representations",
+    ],
+    "delivery-receipt-plan-v2.schema.json": [
+      "kind", "protocolVersion", "manifestSha256", "expectedEventSequence",
+      "expectedEventHash", "routing", "runId", "contextSha256",
+      "conversationIdentity", "turnId", "transport", "locator", "observedAt",
+      "evidenceClass", "providerNamespace", "providerMessageId",
+      "providerAttachmentId", "providerMessageFingerprint",
+      "providerAttachmentFingerprint", "evidenceKind", "evidenceSha256",
+      "evidenceBytes", "representation",
+    ],
+    "collab-delivery-receipt-v2.schema.json": [
+      "kind", "protocolVersion", "slotId", "planSha256", "manifestSha256",
+      "manifestPlanSha256", "runId", "expectedEventSequence",
+      "expectedEventHash", "contextSha256", "routing", "conversationIdentity",
+      "turnId", "transport", "locator", "observedAt", "evidenceClass",
+      "provider", "evidence", "representation", "receiptId",
+    ],
     "verify-plan-v1.schema.json": [
       "kind", "protocolVersion", "cwd", "sourceRoot", "scratchRoot",
       "argv", "timeoutMs", "evidenceClass",
@@ -51,12 +78,42 @@ test("versioned implementation limits agree with normative schemas", async () =>
   const verifySchema = JSON.parse(
     await readFile(path.join(schemaDir, "verify-plan-v1.schema.json"), "utf8"),
   );
+  const deliveryPlanSchema = JSON.parse(
+    await readFile(
+      path.join(schemaDir, "delivery-receipt-plan-v2.schema.json"),
+      "utf8",
+    ),
+  );
+  const deliveryReceiptSchema = JSON.parse(
+    await readFile(
+      path.join(schemaDir, "collab-delivery-receipt-v2.schema.json"),
+      "utf8",
+    ),
+  );
   assert.equal(contextSchema.properties.files.maxItems, LIMITS_V1.pack.maxFiles);
   assert.equal(
     verifySchema.properties.timeoutMs.maximum,
     LIMITS_V1.verify.maxTimeoutMs,
   );
   assert.equal(verifySchema.properties.argv.maxItems, LIMITS_V1.verify.maxArgvItems);
+  assert.equal(
+    deliveryPlanSchema.$defs.representation.properties.attachmentOrdinal.maximum,
+    LIMITS_V2.delivery.maxRepresentations - 1,
+  );
+  assert.equal(
+    deliveryReceiptSchema.$defs.representation.properties.attachmentOrdinal.maximum,
+    LIMITS_V2.delivery.maxRepresentations - 1,
+  );
+  assert.equal(deliveryPlanSchema.$defs.locator.type, "object");
+  assert.equal(deliveryReceiptSchema.$defs.locator.type, "object");
+  assert.equal(
+    deliveryPlanSchema.properties.evidenceBytes.maximum,
+    LIMITS_V2.delivery.maxEvidenceBytes,
+  );
+  assert.equal(
+    deliveryPlanSchema.$defs.nullableProviderId.oneOf[1].maxLength,
+    LIMITS_V2.delivery.maxProviderIdBytes,
+  );
 });
 
 test("loadRun fails closed for unsupported state versions", async () => {
@@ -95,7 +152,17 @@ test("CLI exposes machine-readable help and version without repository context",
   assert.match(help.json.data.usage, /\$codex-chat/);
   assert.deepEqual(
     help.json.data.commands,
-    ["preflight", "pack", "record", "status", "resume", "import", "verify"],
+    [
+      "preflight",
+      "pack",
+      "manifest",
+      "delivery-receipt",
+      "record",
+      "status",
+      "resume",
+      "import",
+      "verify",
+    ],
   );
 
   const version = await runCli(["--version"]);
@@ -103,6 +170,248 @@ test("CLI exposes machine-readable help and version without repository context",
   assert.equal(version.json.ok, true);
   assert.equal(version.json.command, "version");
   assert.match(version.json.data.version, /^\d+\.\d+\.\d+$/);
+});
+
+test("installed CLI creates a scanned typed context manifest", async () => {
+  const root = await tempDir();
+  const planRoot = await tempDir();
+  const outputRoot = await tempDir();
+  const source = "line one\r\nline two\r\n";
+  await writeFixture(root, "notes.txt", source);
+  const planPath = await writeFixture(
+    planRoot,
+    "manifest-plan.json",
+    `${JSON.stringify({
+      kind: "CODEX_CHAT_MANIFEST_PLAN_V2",
+      protocolVersion: 2,
+      routing: {
+        workspaceId: "workspace-contract",
+        coordinatorId: "coordinator-contract",
+        workUnitId: "work-unit-contract",
+        agentId: "agent-contract",
+      },
+      checkpointNamespace: "workspace-contract:work-unit-contract",
+      parent: null,
+      checkpoint: {
+        goal: "Verify installed manifest command.",
+        invariants: ["Model visibility begins unknown."],
+        decisions: [],
+        unresolved: [],
+        verificationStatus: "unverified",
+      },
+      representations: [{
+        representationId: "notes-source",
+        path: "notes.txt",
+        modality: "text",
+        mediaType: "text/plain",
+        role: "source",
+        purpose: "Installed command contract.",
+        fidelity: "exact",
+        sourceRepresentationId: null,
+        locator: null,
+        transform: null,
+        expectedSha256: sha256(source),
+      }],
+    })}\n`,
+  );
+  const result = await runCli([
+    "manifest",
+    "--root", root,
+    "--plan", planPath,
+    "--output", path.join(outputRoot, "manifest.json"),
+  ]);
+
+  assert.equal(result.code, 0, JSON.stringify(result.json));
+  assert.equal(result.json.data.representationCount, 1);
+  assert.equal(result.json.data.representations[0].modelVisible, "unknown");
+  assert.equal(result.json.data.scanner.clean, true);
+});
+
+test("installed CLI creates an immutable delivery receipt without claiming model visibility", async () => {
+  const manifestRoot = await tempDir();
+  const planRoot = await tempDir();
+  const stateDir = await tempDir();
+  const sourceRoot = await tempDir();
+  const runId = "delivery-contract";
+  const contextSha256 = "b".repeat(64);
+  const conversationIdentity = "chatgpt:conversation-contract";
+  const turnId = "turn-contract";
+  const routing = {
+    workspaceId: "workspace-contract",
+    coordinatorId: "coordinator-contract",
+    workUnitId: "work-unit-contract",
+    agentId: "agent-contract",
+  };
+  const manifest = {
+    kind: "COLLAB_CONTEXT_MANIFEST_V2",
+    protocolVersion: 2,
+    rootLabel: "fixture",
+    planSha256: "1".repeat(64),
+    routing,
+    checkpointNamespace: "workspace-contract:work-unit-contract",
+    parent: null,
+    checkpoint: {
+      goal: "Verify the installed delivery-receipt command.",
+      invariants: ["Transport acceptance is not model visibility."],
+      decisions: [],
+      unresolved: [],
+      verificationStatus: "unverified",
+    },
+    representations: [{
+      representationId: "notes-source",
+      path: "notes.txt",
+      modality: "text",
+      mediaType: "text/plain",
+      role: "source",
+      purpose: "Installed delivery receipt contract.",
+      bytes: 5,
+      sha256: sha256("safe\n"),
+      fidelity: "exact",
+      sourceRepresentationId: null,
+      sourceSha256: null,
+      locator: null,
+      transform: null,
+      text: { charset: "utf-8", bom: false, lineEndings: "lf" },
+      delivery: {
+        status: "staged",
+        modelVisible: "unknown",
+        transport: null,
+        conversationIdentity: null,
+        turnId: null,
+        providerAttachmentId: null,
+        providerFingerprint: null,
+      },
+    }],
+  };
+  const manifestRaw = `${JSON.stringify(manifest)}\n`;
+  const manifestPath = await writeFixture(
+    manifestRoot,
+    "manifest.json",
+    manifestRaw,
+  );
+  await recordEvent({
+    stateDir,
+    runId,
+    event: "prepared",
+    data: {
+      contextSha256,
+      sourceRoot,
+      routing: {
+        workspaceId: routing.workspaceId,
+        coordinatorId: routing.coordinatorId,
+        workUnitId: routing.workUnitId,
+      },
+      requiredGates: ["contract"],
+    },
+    expectedSequence: 0,
+    expectedState: null,
+    idempotencyKey: "delivery-contract-prepared",
+  });
+  await recordEvent({
+    stateDir,
+    runId,
+    event: "send_reserved",
+    data: {
+      turnId,
+      marker: "DELIVERY_CONTRACT_MARKER",
+      expectedTerminalMarker: "DELIVERY_CONTRACT_TERMINAL",
+      payloadSha256: contextSha256,
+      conversationIdentity,
+      routing,
+    },
+    expectedSequence: 1,
+    expectedState: "prepared",
+    idempotencyKey: "delivery-contract-reserved",
+  });
+  await recordEvent({
+    stateDir,
+    runId,
+    event: "send_confirmed",
+    data: {
+      turnId,
+      marker: "DELIVERY_CONTRACT_MARKER",
+      conversationIdentity,
+      conversationUrl: "chatgpt://conversation-contract",
+      routing,
+      transportKind: "native-chat",
+      observedAt: "2026-07-29T07:59:00.000Z",
+      confirmationEvidenceClass: "host-accepted",
+      providerMessageFingerprint: null,
+      locator: {
+        type: "thread-id",
+        value: "conversation-contract",
+      },
+    },
+    expectedSequence: 2,
+    expectedState: "send_reserved",
+    idempotencyKey: "delivery-contract-confirmed",
+  });
+  const run = await loadRun({ stateDir, runId });
+  const evidence = "provider accepted attachment-contract\n";
+  const evidencePath = await writeFixture(
+    await tempDir(),
+    "delivery-evidence.txt",
+    evidence,
+  );
+  const planPath = await writeFixture(
+    planRoot,
+    "delivery-plan.json",
+    `${JSON.stringify({
+      kind: "CODEX_CHAT_DELIVERY_RECEIPT_PLAN_V2",
+      protocolVersion: 2,
+      manifestSha256: sha256(manifestRaw),
+      expectedEventSequence: run.eventCount,
+      expectedEventHash: run.lastEventHash,
+      routing,
+      runId,
+      contextSha256,
+      conversationIdentity,
+      turnId,
+      transport: "native-chat",
+      locator: {
+        type: "thread-id",
+        value: "conversation-contract",
+      },
+      observedAt: "2026-07-29T08:00:00.000Z",
+      evidenceClass: "host-attachment-accepted",
+      providerNamespace: "chatgpt",
+      providerMessageId: null,
+      providerAttachmentId: null,
+      providerMessageFingerprint: null,
+      providerAttachmentFingerprint: sha256("attachment-contract"),
+      evidenceKind: "provider-metadata",
+      evidenceSha256: sha256(evidence),
+      evidenceBytes: Buffer.byteLength(evidence),
+      representation: {
+        representationId: "notes-source",
+        representationSha256: sha256("safe\n"),
+        status: "accepted",
+        attachmentOrdinal: 0,
+        declaredBytes: 5,
+        declaredDetail: "original",
+      },
+    })}\n`,
+  );
+
+  const result = await runCli([
+    "delivery-receipt",
+    "--state-dir", stateDir,
+    "--run-id", runId,
+    "--manifest", manifestPath,
+    "--plan", planPath,
+    "--evidence", evidencePath,
+  ]);
+
+  assert.equal(result.code, 0, JSON.stringify(result.json));
+  assert.equal(result.json.data.representationCount, 1);
+  assert.equal(result.json.data.representations[0].status, "accepted");
+  assert.equal(result.json.data.representations[0].modelVisible, "unknown");
+  assert.equal(result.json.data.scanner.clean, true);
+  assert.equal(result.json.data.idempotent, false);
+  assert.match(
+    result.json.data.artifactPath,
+    new RegExp(`${runId}/delivery-receipts/[a-f0-9]{64}\\.json$`),
+  );
 });
 
 test("installed CLI rejects scanner overrides and ignores the old test bypass", async () => {
@@ -131,6 +440,104 @@ test("installed CLI rejects scanner overrides and ignores the old test bypass", 
   assert.equal(ordinary.code, 0, ordinary.stderr);
   assert.equal(ordinary.json.data.scanner.mode, "gitleaks");
   assert.match(ordinary.json.data.scanner.executable, /gitleaks$/);
+});
+
+test("installed CLI isolates gitleaks policy from parent and payload injection", async () => {
+  const root = await tempDir();
+  const output = await tempDir();
+  const customConfig = await writeFixture(
+    await tempDir(),
+    "injected-gitleaks.toml",
+    [
+      'title = "Injected configuration"',
+      "[[rules]]",
+      'id = "never-match"',
+      'description = "Deliberately misses the fixture"',
+      'regex = "CODEX_CHAT_NEVER_MATCH_THIS"',
+      "",
+    ].join("\n"),
+  );
+  const sidekiqFixture = [
+    "export BUNDLE_ENTERPRISE__CONTRIBSYS__COM=",
+    "cafe",
+    "babe:",
+    "dead",
+    "beef",
+  ].join("");
+  await writeFixture(
+    root,
+    "leak.txt",
+    `${sidekiqFixture}\n`,
+  );
+  await writeFixture(
+    root,
+    "inline-allow.txt",
+    `${sidekiqFixture} # gitleaks:allow\n`,
+  );
+
+  const cases = [
+    { GITLEAKS_CONFIG: customConfig },
+    {
+      GITLEAKS_CONFIG_TOML: [
+        'title = "Injected configuration"',
+        "[[rules]]",
+        'id = "never-match"',
+        'description = "Deliberately misses the fixture"',
+        'regex = "CODEX_CHAT_NEVER_MATCH_THIS"',
+        "",
+      ].join("\n"),
+    },
+  ];
+  for (const [index, env] of cases.entries()) {
+    const result = await runCli([
+      "pack",
+      "--root", root,
+      "--include", "leak.txt",
+      "--output", path.join(output, `context-${index}.json`),
+    ], { env });
+    assert.equal(result.code, 2);
+    assert.equal(result.json.error.code, "SECRET_DETECTED");
+  }
+
+  const inlineAllow = await runCli([
+    "pack",
+    "--root", root,
+    "--include", "inline-allow.txt",
+    "--output", path.join(output, "inline-allow-context.json"),
+  ]);
+  assert.equal(inlineAllow.code, 2);
+  assert.equal(inlineAllow.json.error.code, "SECRET_DETECTED");
+
+  await writeFixture(root, "safe.txt", "safe\n");
+  const safe = await runCli([
+    "pack",
+    "--root", root,
+    "--include", "safe.txt",
+    "--output", path.join(output, "safe-context.json"),
+  ], { env: cases[0] });
+  assert.equal(safe.code, 0, safe.stderr);
+  assert.equal(safe.json.data.scanner.configuration, "builtin-default");
+  assert.equal(safe.json.data.scanner.environmentSanitized, true);
+  assert.equal(safe.json.data.scanner.inlineAllowDisabled, true);
+  assert.equal(safe.json.data.scanner.ignoreFileIsolated, true);
+});
+
+test("installed CLI forbids changing versioned packing limits", async () => {
+  const root = await tempDir();
+  const output = await tempDir();
+  await writeFixture(root, "safe.txt", "safe\n");
+
+  for (const option of ["--max-file-bytes", "--max-total-bytes"]) {
+    const result = await runCli([
+      "pack",
+      "--root", root,
+      "--include", "safe.txt",
+      "--output", path.join(output, `${option.slice(2)}.json`),
+      option, String(1024 * 1024),
+    ]);
+    assert.equal(result.code, 2);
+    assert.equal(result.json.error.code, "LIMIT_OVERRIDE_FORBIDDEN");
+  }
 });
 
 test("CLI import is unavailable before terminal response review", async () => {

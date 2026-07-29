@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, readFile, symlink } from "node:fs/promises";
+import { chmod, readFile, readdir, symlink } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { promisify } from "node:util";
 import {
   importResult,
   parseResultEnvelope,
@@ -10,11 +13,15 @@ import {
 import { tempDir, writeFixture } from "../helpers.mjs";
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+const execFileAsync = promisify(execFile);
 
 async function boundImport(options) {
   return importResult({
     ...options,
     sourceRoot: options.sourceRoot ?? await tempDir(),
+    targetLockDir:
+      options.targetLockDir ??
+      path.join(path.dirname(options.quarantineDir), "target-locks"),
     expectedRunId: options.envelope.runId,
     expectedTurnId: options.envelope.turnId,
     expectedContextSha256: options.envelope.contextSha256,
@@ -309,6 +316,220 @@ test("importResult recovers a crash after target replacement without duplicate a
   assert.equal(recovered.idempotent, true);
   assert.equal(recovered.recovered, true);
   assert.equal(recovered.outputSha256, sha256(after));
+});
+
+test("importResult serializes competing applications for the same scratch target", async () => {
+  const scratch = await tempDir();
+  const sourceRoot = await tempDir();
+  const quarantineDir = path.join(await tempDir(), "quarantine");
+  const before = "before\n";
+  await writeFixture(scratch, "source.txt", before);
+
+  function competingEnvelope(runId, replacement) {
+    const patch = [
+      "--- a/source.txt", "+++ b/source.txt", "@@ -1,1 +1,1 @@",
+      "-before", `+${replacement}`, "",
+    ].join("\n");
+    return {
+      kind: "COLLAB_RESULT_V1",
+      protocolVersion: 1,
+      runId,
+      turnId: "turn-1",
+      contextSha256: sha256("context"),
+      complete: true,
+      artifactKind: "patch",
+      summary: replacement,
+      patch: { format: "unified-diff", sha256: sha256(patch), content: patch },
+      preimages: [{ path: "source.txt", sha256: sha256(before) }],
+      claims: { testsRun: [] },
+    };
+  }
+
+  let releaseFirst;
+  let firstPrepared;
+  const firstPreparedPromise = new Promise((resolve) => {
+    firstPrepared = resolve;
+  });
+  const releaseFirstPromise = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const firstEnvelope = competingEnvelope("run-first-writer", "first");
+  const secondEnvelope = competingEnvelope("run-second-writer", "second");
+  const first = boundImport({
+    envelope: firstEnvelope,
+    sourceRoot,
+    scratch,
+    quarantineDir,
+    allowedPaths: ["source.txt"],
+    scanner: "skip",
+    testMode: true,
+    testBeforeFinalCompare: async () => {
+      firstPrepared();
+      await releaseFirstPromise;
+    },
+  });
+  await firstPreparedPromise;
+  const second = boundImport({
+    envelope: secondEnvelope,
+    sourceRoot,
+    scratch,
+    quarantineDir,
+    allowedPaths: ["source.txt"],
+    scanner: "skip",
+    testMode: true,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  releaseFirst();
+
+  const firstResult = await first;
+  assert.equal(firstResult.outputSha256, sha256("first\n"));
+  await assert.rejects(second, (error) => error.code === "PREIMAGE_STALE");
+  assert.equal(await readFile(path.join(scratch, "source.txt"), "utf8"), "first\n");
+});
+
+test("importResult admits one winner across 32 competing processes", async () => {
+  const scratch = await tempDir();
+  const sourceRoot = await tempDir();
+  const stateRoot = await tempDir();
+  const targetLockDir = path.join(stateRoot, ".target-locks");
+  const workerRoot = await tempDir();
+  const before = "before\n";
+  await writeFixture(scratch, "source.txt", before);
+  const importModule = pathToFileURL(path.resolve(
+    ".agents/skills/codex-chat/scripts/lib/import.mjs",
+  )).href;
+  const worker = await writeFixture(
+    workerRoot,
+    "import-worker.mjs",
+    [
+      `import { importResult } from ${JSON.stringify(importModule)};`,
+      'import { readFile } from "node:fs/promises";',
+      "const options = JSON.parse(await readFile(process.argv[2], 'utf8'));",
+      "try {",
+      "  const result = await importResult(options);",
+      "  process.stdout.write(JSON.stringify({ ok: true, outputSha256: result.outputSha256 }));",
+      "} catch (error) {",
+      "  process.stdout.write(JSON.stringify({ ok: false, code: error.code }));",
+      "}",
+      "",
+    ].join("\n"),
+  );
+
+  const workers = [];
+  for (let index = 0; index < 32; index += 1) {
+    const replacement = index % 2 === 0 ? "first" : "second";
+    const patch = [
+      "--- a/source.txt", "+++ b/source.txt", "@@ -1,1 +1,1 @@",
+      "-before", `+${replacement}`, "",
+    ].join("\n");
+    const envelope = {
+      kind: "COLLAB_RESULT_V1",
+      protocolVersion: 1,
+      runId: `run-process-${index}`,
+      turnId: "turn-1",
+      contextSha256: sha256("context"),
+      complete: true,
+      artifactKind: "patch",
+      summary: replacement,
+      patch: { format: "unified-diff", sha256: sha256(patch), content: patch },
+      preimages: [{ path: "source.txt", sha256: sha256(before) }],
+      claims: { testsRun: [] },
+    };
+    const quarantineDir = path.join(
+      stateRoot,
+      `run-process-${index}`,
+      "quarantine",
+    );
+    const optionsPath = await writeFixture(
+      workerRoot,
+      `options-${index}.json`,
+      `${JSON.stringify({
+        envelope,
+        scratch,
+        sourceRoot,
+        quarantineDir,
+        targetLockDir,
+        allowedPaths: ["source.txt"],
+        expectedRunId: envelope.runId,
+        expectedTurnId: envelope.turnId,
+        expectedContextSha256: envelope.contextSha256,
+        scanner: "skip",
+        testMode: true,
+      })}\n`,
+    );
+    workers.push(
+      execFileAsync(process.execPath, [worker, optionsPath], {
+        maxBuffer: 1024 * 1024,
+      }).then(({ stdout }) => JSON.parse(stdout)),
+    );
+  }
+
+  const outcomes = await Promise.all(workers);
+  const winners = outcomes.filter(({ ok }) => ok);
+  const losers = outcomes.filter(({ ok }) => !ok);
+  assert.equal(winners.length, 1);
+  assert.equal(losers.length, 31);
+  assert.equal(
+    losers.every(({ code }) => ["PREIMAGE_STALE", "TARGET_BUSY"].includes(code)),
+    true,
+  );
+  const installed = await readFile(path.join(scratch, "source.txt"), "utf8");
+  assert.equal(["first\n", "second\n"].includes(installed), true);
+  let appliedReceiptCount = 0;
+  for (let index = 0; index < 32; index += 1) {
+    const names = await readdir(
+      path.join(stateRoot, `run-process-${index}`, "quarantine"),
+    );
+    appliedReceiptCount += names.filter((name) =>
+      name.endsWith(".imported.json")
+    ).length;
+  }
+  assert.equal(appliedReceiptCount, 1);
+});
+
+test("importResult rejects a target changed after its prepared receipt", async () => {
+  const scratch = await tempDir();
+  const sourceRoot = await tempDir();
+  const quarantineDir = path.join(await tempDir(), "quarantine");
+  const before = "before\n";
+  await writeFixture(scratch, "source.txt", before);
+  const patch = [
+    "--- a/source.txt", "+++ b/source.txt", "@@ -1,1 +1,1 @@",
+    "-before", "+after", "",
+  ].join("\n");
+  const envelope = {
+    kind: "COLLAB_RESULT_V1",
+    protocolVersion: 1,
+    runId: "run-final-compare",
+    turnId: "turn-1",
+    contextSha256: sha256("context"),
+    complete: true,
+    artifactKind: "patch",
+    summary: "final compare fixture",
+    patch: { format: "unified-diff", sha256: sha256(patch), content: patch },
+    preimages: [{ path: "source.txt", sha256: sha256(before) }],
+    claims: { testsRun: [] },
+  };
+
+  await assert.rejects(
+    boundImport({
+      envelope,
+      sourceRoot,
+      scratch,
+      quarantineDir,
+      allowedPaths: ["source.txt"],
+      scanner: "skip",
+      testMode: true,
+      testBeforeFinalCompare: async () => {
+        await writeFixture(scratch, "source.txt", "external change\n");
+      },
+    }),
+    (error) => error.code === "PREIMAGE_CHANGED_DURING_IMPORT",
+  );
+  assert.equal(
+    await readFile(path.join(scratch, "source.txt"), "utf8"),
+    "external change\n",
+  );
 });
 
 test("importResult rejects a symlinked scratch root", async () => {

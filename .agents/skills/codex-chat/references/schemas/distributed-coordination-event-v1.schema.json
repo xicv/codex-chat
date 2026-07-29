@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-chat.invalid/schemas/distributed-coordination-event-v1.schema.json",
+  "title": "CODEX_CHAT_COORDINATION_EVENT_V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "protocolVersion",
+    "sequence",
+    "atMs",
+    "limitsDigest",
+    "request",
+    "assignments",
+    "resultDigest",
+    "previousHash",
+    "hash"
+  ],
+  "properties": {
+    "kind": { "const": "CODEX_CHAT_COORDINATION_EVENT_V1" },
+    "protocolVersion": { "const": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "atMs": { "type": "integer", "minimum": 0 },
+    "limitsDigest": { "$ref": "#/$defs/sha256" },
+    "request": {
+      "allOf": [
+        {
+          "$ref": "distributed-coordination-request-v1.schema.json"
+        },
+        {
+          "not": {
+            "properties": {
+              "operation": {
+                "enum": ["run.read", "mail.inspect", "mail.list"]
+              }
+            },
+            "required": ["operation"]
+          }
+        }
+      ]
+    },
+    "assignments": {
+      "type": "array",
+      "maxItems": 1,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "resultDigest": { "$ref": "#/$defs/sha256" },
+    "previousHash": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/sha256" }
+      ]
+    },
+    "hash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

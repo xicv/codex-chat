@@ -85,6 +85,44 @@ evidence. Read
 [coordination-v2.md](references/coordination-v2.md) before using more than one
 agent or coordinator.
 
+When coordinators or agents run on different hosts, do not approximate shared
+state with conversation titles, copied "latest" messages, several local state
+directories, or a network filesystem. Start one authoritative distributed
+control plane and read
+[distributed-coordination-v1.md](references/distributed-coordination-v1.md):
+
+```bash
+node <skill>/scripts/codex-chat.mjs control-serve \
+  --state-dir /var/lib/codex-chat/control \
+  --host 127.0.0.1 \
+  --port 9443
+
+node <skill>/scripts/codex-chat.mjs control \
+  --endpoint http://127.0.0.1:9443 \
+  --request /private/tmp/coordination-request.json
+```
+
+Non-loopback listeners require TLS; client certificates are optional and can
+be required. Pre-populate the environment from the deployment's secret
+manager. Pass the bearer token only through
+`CODEX_CHAT_CONTROL_TOKEN`, never an argument, task envelope, browser page, or
+external collaborator message.
+
+For one distributed run: acquire an epoch lease; append the exact distributed
+run head; claim any provider conversation; enqueue work on the complete
+workspace/coordinator/run/work-unit/agent route; claim with a visibility
+timeout; acknowledge, cancel, or prune finalized work; and renew or release
+the lease. Every mutation has a permanent idempotency key. Every state-changing
+operation after acquisition carries the current owner, lease ID, and fencing
+token. A takeover must reconcile local evidence and pending sends before doing
+new work.
+
+The authority is one durable single-writer process. It supports clients on
+several hosts but is not replicated consensus or automatic host failover. If
+it is unavailable, pause rather than creating a second authority. Its bearer
+token is a trusted-domain credential, not per-agent authorization; never give
+it to an untrusted external model.
+
 Create the run with the context artifact SHA-256 and the SHA-256 of the exact
 English task envelope that will be sent, then reserve the one outbound turn.
 New runs use `outboundBindingVersion: 2`. For a coordinated run, `prepared`

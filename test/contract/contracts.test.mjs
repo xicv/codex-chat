@@ -10,9 +10,13 @@ import {
 } from "../../.agents/skills/codex-chat/scripts/lib/state.mjs";
 import { runCli, tempDir, writeFixture } from "../helpers.mjs";
 import {
+  LIMITS_DISTRIBUTED_V1,
   LIMITS_V1,
   LIMITS_V2,
 } from "../../.agents/skills/codex-chat/scripts/lib/limits.mjs";
+import {
+  DISTRIBUTED_COORDINATION_OPERATIONS,
+} from "../../.agents/skills/codex-chat/scripts/lib/distributed-coordination.mjs";
 
 const schemaDir = path.resolve(
   ".agents/skills/codex-chat/references/schemas",
@@ -73,6 +77,13 @@ test("normative JSON schemas are valid and expose the v1 required fields", async
       "outbound", "conversationLeases", "allowedLedgerEvents",
       "forbiddenTransportActions", "nextAction",
     ],
+    "distributed-coordination-request-v1.schema.json": [
+      "operation", "data",
+    ],
+    "distributed-coordination-event-v1.schema.json": [
+      "kind", "protocolVersion", "sequence", "atMs", "limitsDigest",
+      "request", "assignments", "resultDigest", "previousHash", "hash",
+    ],
   };
   for (const [name, required] of Object.entries(expectations)) {
     const schema = JSON.parse(await readFile(path.join(schemaDir, name), "utf8"));
@@ -80,6 +91,22 @@ test("normative JSON schemas are valid and expose the v1 required fields", async
     assert.deepEqual(schema.required, required);
     assert.equal(schema.additionalProperties, false);
   }
+  const responseSchema = JSON.parse(
+    await readFile(
+      path.join(
+        schemaDir,
+        "distributed-coordination-response-v1.schema.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(
+    responseSchema.$schema,
+    "https://json-schema.org/draft/2020-12/schema",
+  );
+  assert.equal(responseSchema.oneOf.length, 2);
+  assert.deepEqual(responseSchema.oneOf[0].required, ["schema", "ok", "data"]);
+  assert.deepEqual(responseSchema.oneOf[1].required, ["schema", "ok", "error"]);
 });
 
 test("versioned implementation limits agree with normative schemas", async () => {
@@ -138,6 +165,56 @@ test("versioned implementation limits agree with normative schemas", async () =>
   assert.equal(LIMITS_V1.ledger.maxEventsPerRun, 1024);
   assert.equal(LIMITS_V1.ledger.completionEventReserve, 32);
   assert.equal(LIMITS_V1.ledger.resourceObservationCoalesceMs, 5_000);
+  const distributedRequestSchema = JSON.parse(
+    await readFile(
+      path.join(
+        schemaDir,
+        "distributed-coordination-request-v1.schema.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(
+    distributedRequestSchema.properties.operation.enum,
+    [...DISTRIBUTED_COORDINATION_OPERATIONS],
+  );
+  assert.equal(LIMITS_DISTRIBUTED_V1.mailbox.maxQueuedMessages, 128);
+  assert.equal(LIMITS_DISTRIBUTED_V1.mailbox.maxQueuedBytes, 1024 * 1024);
+  assert.equal(LIMITS_DISTRIBUTED_V1.mailbox.maxRetainedMessages, 512);
+  assert.equal(LIMITS_DISTRIBUTED_V1.mailbox.maxPruneBatch, 128);
+  assert.equal(LIMITS_DISTRIBUTED_V1.state.maxMessageTombstones, 16_384);
+  assert.equal(
+    LIMITS_DISTRIBUTED_V1.state.maxIdempotencyBytes,
+    32 * 1024 * 1024,
+  );
+  assert.equal(
+    LIMITS_DISTRIBUTED_V1.state.maxRetainedPayloadBytes,
+    32 * 1024 * 1024,
+  );
+  assert.equal(
+    LIMITS_DISTRIBUTED_V1.state.maxJournalBytes,
+    64 * 1024 * 1024,
+  );
+  assert.equal(
+    LIMITS_DISTRIBUTED_V1.state.maxSnapshotBytes,
+    128 * 1024 * 1024,
+  );
+  assert.equal(LIMITS_DISTRIBUTED_V1.control.maxRequestBytes, 128 * 1024);
+  assert.equal(LIMITS_DISTRIBUTED_V1.control.maxRateLimitKeys, 4096);
+  const distributedEventSchema = JSON.parse(
+    await readFile(
+      path.join(
+        schemaDir,
+        "distributed-coordination-event-v1.schema.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(
+    distributedEventSchema.properties.request.allOf[1]
+      .not.properties.operation.enum,
+    ["run.read", "mail.inspect", "mail.list"],
+  );
 });
 
 test("loadRun fails closed for unsupported state versions", async () => {
@@ -182,6 +259,8 @@ test("CLI exposes machine-readable help and version without repository context",
       "manifest",
       "delivery-receipt",
       "terminal-capture",
+      "control-serve",
+      "control",
       "record",
       "status",
       "resume",

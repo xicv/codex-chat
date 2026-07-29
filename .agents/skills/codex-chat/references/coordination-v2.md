@@ -70,26 +70,30 @@ The file locks wait up to five seconds with bounded exponential backoff and
 reclaim only a lock whose PID is proven dead. They improve local overload
 tolerance but remain single-host primitives. Using different state directories,
 a network filesystem with unsuitable create/rename semantics, or several hosts
-bypasses the guarantee.
+bypasses this local guarantee. For multi-host clients, use the separate
+authoritative control plane in
+[distributed-coordination-v1.md](distributed-coordination-v1.md).
 
 This is an opt-in v1-compatible path. Legacy v1 runs remain readable but do not
 gain evidence that was never recorded.
 
-## Direct messages and broadcasts (distributed extension)
+## Direct messages (distributed control plane)
 
-The current CLI has no persistent mailbox service. A future multi-host adapter
-should make mutation commands direct:
+The opt-in `control-serve` process implements durable direct mailboxes:
 
 ```text
 mailbox = (workspaceId, coordinatorId, runId, workUnitId, agentId)
 ```
 
-The response must contain the direct message ID, correlation ID, causal parent
-ID, route tuple, payload digest, and expected stream head. A response with a
-different tuple or causal parent is a `crossed_response`; it is quarantined and
-cannot advance state.
+Enqueue binds the direct message ID, correlation ID, causal parent ID, route
+tuple, payload digest, current coordinator fence, and exact non-terminal
+distributed run head. Claim, acknowledgement, cancellation, and finalized
+message pruning are durable mutations. Visibility expiry provides redelivery;
+mailbox count/byte/in-flight/retention limits provide explicit backpressure.
+Crossed route, claim, fence, or causal bindings fail closed.
 
-Broadcasts should be evidence-only by default:
+Broadcasts remain an unimplemented evidence contract and should be
+evidence-only by default:
 
 ```text
 topic = (workspaceId, runId, workUnitId, type, source)
@@ -120,32 +124,35 @@ not let several coordinators merge into one mutable checkout independently.
 
 ## Coordinator failover and distributed fencing
 
-A distributed v2 coordinator needs an epoch lease:
+The opt-in distributed authority implements an epoch lease:
 
 ```text
 (workspaceId, runId, coordinatorEpoch, owner, expiry, fencingToken)
 ```
 
-Each successful takeover increments the fencing token. Every mutation,
-receipt, and checkpoint must include the current token; storage rejects stale
-tokens even if the old coordinator resumes after a pause. Expiry alone is not
-enough: the new coordinator first reconciles the run ledger and any pending
-external send. Confirmed or ambiguous sends remain observe-only after failover.
+Each successful takeover increments the fencing token. Lease renewal/release,
+distributed run append, conversation claims, and mailbox mutations carry the
+exact current owner, lease ID, and fencing token. The authority rejects a stale
+coordinator even if it resumes after a pause. Expiry alone is not enough: the
+new coordinator first reconciles the distributed run head, local evidence,
+mailboxes, and any pending external send. Confirmed or ambiguous sends remain
+observe-only after failover.
 
-The current local lock and provider-conversation lease do not provide
-distributed fencing, quorum, clock-independent expiry, or PID-reuse
-diagnostics. Do not represent them as multi-host leases. Durable mailboxes,
-backpressure, cancellation, and coordinator epochs should live behind a
-separate adapter; they should not be approximated by several processes sharing
-browser titles or "latest message" state.
+The local run ledger and provider-conversation registry remain separate
+single-host evidence. They do not turn into distributed leases merely because
+`control-serve` exists. Cross-host participants must connect to the same
+authority and bind artifacts to its head. The v1 authority is a single durable
+process, not a quorum or highly available cluster; its server clock owns lease
+expiry.
 
 ## Backpressure and cancellation
 
-Give each mailbox a fixed maximum in-flight count and byte budget. Reject or
-queue new work before those limits are exceeded. Cancellation is a durable
-event addressed to one route and causal message. It is cooperative: it stops
-new side effects but cannot erase a send, file replacement, or receipt that
-already became durable.
+The distributed mailbox enforces fixed queued-count, queued-byte, in-flight,
+per-message, retained-message, and global retained-payload limits. Finalized
+payloads can be pruned while permanent message-ID tombstones prevent reuse.
+Cancellation is a durable event addressed to one route and causal message. It
+is cooperative: it stops future delivery/acknowledgement but cannot erase a
+send, file replacement, or receipt that already became durable.
 
 Checkpoint namespaces should include workspace, run, and work unit. The local
 ledger limits each run segment to 1,024 events and reserves the final 32 for

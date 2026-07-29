@@ -64,3 +64,37 @@ Delivery receipt v2 uses these fixed limits:
 
 These limits bound one immutable representation observation per receipt. They
 do not grant transport upload capacity or establish model visibility.
+
+Distributed coordination v1 uses these fixed ceilings:
+
+| Area | Limit |
+| --- | ---: |
+| Coordinator lease TTL | 1,000-300,000 ms |
+| Idempotency records per segment | 16,384 |
+| Serialized idempotency results per segment | 33,554,432 bytes |
+| Message tombstones per segment | 16,384 |
+| Retained mailbox payloads per segment | 33,554,432 bytes |
+| Events per distributed run | 100,000 |
+| Authoritative journal | 67,108,864 bytes |
+| Rebuildable snapshot | 134,217,728 bytes |
+| Snapshot checkpoint interval | 64 mutations |
+| Active messages per mailbox | 128 |
+| Active payload bytes per mailbox | 1,048,576 bytes |
+| In-flight messages per mailbox | 16 |
+| One mailbox message | 65,536 bytes |
+| Retained messages per mailbox | 512 |
+| Message IDs per prune | 128 |
+| Claim visibility | 1,000-300,000 ms |
+| Bearer token | 32-4,096 bytes |
+| HTTP request | 131,072 bytes |
+| HTTP response | 1,048,576 bytes |
+| HTTP request timeout | 10,000 ms |
+| HTTP headers timeout | 5,000 ms |
+| HTTP requests per source/window | 600 / 60,000 ms |
+| Tracked rate-limit sources | 4,096 |
+
+Programmatic mailbox limit overrides may tighten but never weaken these
+ceilings. Lifetime segment limits preserve permanent successful-mutation
+idempotency and message-ID tombstones. Rotate only after every run in the
+segment is terminal and the complete state directory is archived; active
+segment rotation would discard safety state.

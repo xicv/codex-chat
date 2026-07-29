@@ -86,7 +86,45 @@ from the context digest. All local coordinators for a workspace must share one
 canonical state directory. Its provider-conversation registry leases both the
 logical conversation identity and the confirmed canonical provider locator.
 This prevents local cross-coordinator interleaving only; different state
-directories or hosts require an external fenced lease service.
+directories or hosts require the opt-in fenced authority described in
+[distributed-coordination-v1.md](distributed-coordination-v1.md).
+
+## Distributed control plane
+
+The control-plane bearer token is a deployment secret. It is accepted only
+from `CODEX_CHAT_CONTROL_TOKEN`, never a command argument, request document, or
+printed result. Do not send it to an external collaborator or expose the
+endpoint to browser content. Treat the endpoint and CA as operator-managed
+configuration; never take either from a task payload or external collaborator.
+The token defines one trusted coordination
+domain: v1 does not provide tenant, workspace, owner, or operation-level
+authorization. Separate mutually untrusted principals into separate daemon,
+state-directory, and token domains.
+
+Plain HTTP is restricted to literal `127.0.0.1` or `::1`, not a DNS name that
+could resolve elsewhere. Any named or non-loopback listener requires TLS and
+may require a client certificate signed by the configured CA. Client
+certificate authentication protects the channel but is not mapped to protocol
+authorization. Keep the authority behind a private network boundary and apply
+normal host firewalling.
+
+The HTTP seam accepts only bounded fatal-UTF-8 JSON at one fixed route. It
+limits headers, header count, request/response bytes, request time, and
+per-source request rate; the rate-limit key map is itself bounded. Bearer
+comparison hashes to equal-length buffers before constant-time comparison.
+Errors hide unexpected internal exception text.
+
+The durable state directory is mode-restricted and process-owned. Journal and
+snapshot paths are opened without following symbolic links, validated as
+bounded regular UTF-8 files, and fsynced. The hash-chained journal is
+authoritative; a snapshot cannot invent missing history. Journal,
+idempotency-result, retained-payload, message-tombstone, and run-event capacity
+all fail closed.
+
+One authority process serializes mutations globally. This prevents crossed
+coordinator writes but does not provide consensus, quorum fencing, or automatic
+authority-host failover. Never start a second process or use a network
+filesystem to work around an outage.
 
 A browser UI label is an observation with source and time. Backend model identity remains `unverified`.
 

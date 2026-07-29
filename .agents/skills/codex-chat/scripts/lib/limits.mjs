@@ -55,3 +55,41 @@ export const LIMITS_V2 = Object.freeze({
     maxProviderIdBytes: 1024,
   }),
 });
+
+export const LIMITS_DISTRIBUTED_V1 = Object.freeze({
+  lease: Object.freeze({
+    minTtlMs: 1_000,
+    maxTtlMs: 300_000,
+  }),
+  state: Object.freeze({
+    maxIdempotencyRecords: 16_384,
+    maxIdempotencyBytes: 32 * 1024 * 1024,
+    maxMessageTombstones: 16_384,
+    maxRetainedPayloadBytes: 32 * 1024 * 1024,
+    maxRunEvents: 100_000,
+    maxJournalBytes: 64 * 1024 * 1024,
+    maxSnapshotBytes: 128 * 1024 * 1024,
+    checkpointEveryEvents: 64,
+  }),
+  mailbox: Object.freeze({
+    maxQueuedMessages: 128,
+    maxQueuedBytes: 1024 * 1024,
+    maxInFlight: 16,
+    maxMessageBytes: 64 * 1024,
+    maxRetainedMessages: 512,
+    maxPruneBatch: 128,
+    minVisibilityTimeoutMs: 1_000,
+    maxVisibilityTimeoutMs: 300_000,
+  }),
+  control: Object.freeze({
+    minTokenBytes: 32,
+    maxTokenBytes: 4096,
+    maxRequestBytes: 128 * 1024,
+    maxResponseBytes: 1024 * 1024,
+    requestTimeoutMs: 10_000,
+    headersTimeoutMs: 5_000,
+    maxRequestsPerWindow: 600,
+    maxRateLimitKeys: 4096,
+    rateWindowMs: 60_000,
+  }),
+});

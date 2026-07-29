@@ -55,7 +55,12 @@ when observable, and takes a second lease on that locator. Different runs or
 coordinators cannot own either local lease concurrently. Terminal runs release
 their leases; a new claimant may also fence out an owner whose durable run is
 already terminal. These are single-host file leases, not distributed fencing.
-See [coordination-v2.md](coordination-v2.md).
+Multi-host participants use the separate authoritative epoch, run-head,
+conversation-claim, and mailbox service described in
+[distributed-coordination-v1.md](distributed-coordination-v1.md). The two
+ledgers have different responsibilities: distributed CAS coordinates hosts;
+the local run ledger preserves detailed browser workflow and acceptance
+evidence. See [coordination-v2.md](coordination-v2.md).
 
 Every run segment has a fixed 1,024-event limit. The last 32 slots accept only
 terminal capture, review, declared verification, acceptance, or blocking, so

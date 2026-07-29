@@ -10,6 +10,14 @@ import { preflight } from "./lib/preflight.mjs";
 import { packContext } from "./lib/pack.mjs";
 import { createContextManifest } from "./lib/context-manifest.mjs";
 import { createDeliveryReceipt } from "./lib/delivery-receipt.mjs";
+import {
+  openCoordinationControlPlane,
+} from "./lib/distributed-coordination.mjs";
+import {
+  executeRemoteCoordination,
+  startCoordinationHttpServer,
+} from "./lib/distributed-coordination-http.mjs";
+import { LIMITS_DISTRIBUTED_V1 } from "./lib/limits.mjs";
 import { importResult, parseResultEnvelope } from "./lib/import.mjs";
 import { buildRecoveryPlan } from "./lib/recovery-plan.mjs";
 import { loadRun, recordEvent } from "./lib/state.mjs";
@@ -27,6 +35,8 @@ const COMMANDS = [
   "manifest",
   "delivery-receipt",
   "terminal-capture",
+  "control-serve",
+  "control",
   "record",
   "status",
   "resume",
@@ -50,10 +60,19 @@ function emitSuccess(command, data) {
   });
 }
 
-async function readJsonOption(filePath, label) {
+async function readJsonOption(filePath, label, maxBytes = null) {
   try {
-    return JSON.parse(await readFile(path.resolve(filePath), "utf8"));
+    const bytes = await readFile(path.resolve(filePath));
+    if (maxBytes !== null && bytes.byteLength > maxBytes) {
+      throw new CodexChatError(
+        "JSON_FILE_TOO_LARGE",
+        `${label} exceeds its protocol byte limit.`,
+      );
+    }
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return JSON.parse(text);
   } catch (error) {
+    if (error instanceof CodexChatError) throw error;
     throw new CodexChatError("JSON_FILE_INVALID", `${label} is not valid JSON: ${error.message}`);
   }
 }
@@ -64,6 +83,42 @@ function parseInlineJson(value, label) {
   } catch (error) {
     throw new CodexChatError("JSON_INLINE_INVALID", `${label} is not valid JSON: ${error.message}`);
   }
+}
+
+function requiredControlToken() {
+  const token = process.env.CODEX_CHAT_CONTROL_TOKEN;
+  if (!token) {
+    throw new CodexChatError(
+      "CONTROL_TOKEN_REQUIRED",
+      "CODEX_CHAT_CONTROL_TOKEN is required.",
+    );
+  }
+  return token;
+}
+
+function parseBooleanOption(value, label) {
+  if (value === undefined) return false;
+  if (!["true", "false"].includes(value)) {
+    throw new CodexChatError(
+      "USAGE",
+      `${label} must be true or false.`,
+    );
+  }
+  return value === "true";
+}
+
+function waitForShutdownSignal() {
+  return new Promise((resolve) => {
+    const finish = (signal) => {
+      process.off("SIGINT", onInterrupt);
+      process.off("SIGTERM", onTerminate);
+      resolve(signal);
+    };
+    const onInterrupt = () => finish("SIGINT");
+    const onTerminate = () => finish("SIGTERM");
+    process.once("SIGINT", onInterrupt);
+    process.once("SIGTERM", onTerminate);
+  });
 }
 
 async function main() {
@@ -100,6 +155,110 @@ async function main() {
     options["state-dir"] ??
     process.env.CODEX_CHAT_STATE_DIR ??
     path.join(os.homedir(), ".codex", "codex-chat", "runs");
+  if (command === "control-serve") {
+    const token = requiredControlToken();
+    const hasTlsKey = Object.hasOwn(options, "tls-key");
+    const hasTlsCert = Object.hasOwn(options, "tls-cert");
+    if (hasTlsKey !== hasTlsCert) {
+      throw new CodexChatError(
+        "CONTROL_TLS_CONFIG_INVALID",
+        "Use --tls-key and --tls-cert together.",
+      );
+    }
+    const port = Number(options.port ?? "9443");
+    if (!Number.isInteger(port)) {
+      throw new CodexChatError("USAGE", "--port must be an integer.");
+    }
+    const tls = hasTlsKey
+      ? {
+          key: await readFile(path.resolve(options["tls-key"])),
+          cert: await readFile(path.resolve(options["tls-cert"])),
+          ...(options["tls-ca"]
+            ? { ca: await readFile(path.resolve(options["tls-ca"])) }
+            : {}),
+          requestCert: parseBooleanOption(
+            options["require-client-cert"],
+            "--require-client-cert",
+          ),
+        }
+      : null;
+    const controlPlane = await openCoordinationControlPlane({ stateDir });
+    let server = null;
+    try {
+      server = await startCoordinationHttpServer({
+        controlPlane,
+        host: options.host ?? "127.0.0.1",
+        port,
+        token,
+        tls,
+      });
+      emitSuccess(command, {
+        endpoint: server.endpoint,
+        stateDir: path.resolve(stateDir),
+        tls: tls !== null,
+        clientCertificateRequired: tls?.requestCert === true,
+      });
+      await waitForShutdownSignal();
+    } finally {
+      try {
+        await server?.close();
+      } finally {
+        await controlPlane.close();
+      }
+    }
+    return;
+  }
+  if (command === "control") {
+    if (options.request && options["request-json"]) {
+      throw new CodexChatError(
+        "USAGE",
+        "Use only one of --request or --request-json.",
+      );
+    }
+    const request = options.request
+      ? await readJsonOption(
+          options.request,
+          "control request",
+          LIMITS_DISTRIBUTED_V1.control.maxRequestBytes,
+        )
+      : options["request-json"]
+        ? parseInlineJson(options["request-json"], "control request")
+        : (() => {
+            throw new CodexChatError(
+              "USAGE",
+              "Missing required option --request or --request-json.",
+            );
+          })();
+    const hasClientKey = Object.hasOwn(options, "client-key");
+    const hasClientCert = Object.hasOwn(options, "client-cert");
+    if (hasClientKey !== hasClientCert) {
+      throw new CodexChatError(
+        "CONTROL_TLS_CONFIG_INVALID",
+        "Use --client-key and --client-cert together.",
+      );
+    }
+    emitSuccess(
+      command,
+      await executeRemoteCoordination({
+        endpoint:
+          options.endpoint ??
+          process.env.CODEX_CHAT_CONTROL_ENDPOINT ??
+          required(options, "endpoint"),
+        token: requiredControlToken(),
+        request,
+        ...(options.ca
+          ? { ca: await readFile(path.resolve(options.ca)) }
+          : {}),
+        ...(hasClientKey
+          ? {
+              key: await readFile(path.resolve(options["client-key"])),
+              cert: await readFile(path.resolve(options["client-cert"])),
+            }
+          : {}),
+      }),
+    );
+    return;
+  }
   if (command === "preflight") {
     const root = required(options, "root");
     emitSuccess(

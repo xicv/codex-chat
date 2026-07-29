@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-chat.invalid/schemas/distributed-coordination-request-v1.schema.json",
+  "title": "CODEX_CHAT_DISTRIBUTED_COORDINATION_REQUEST_V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "data"],
+  "properties": {
+    "operation": {
+      "enum": [
+        "lease.acquire",
+        "lease.renew",
+        "lease.release",
+        "run.append",
+        "run.read",
+        "conversation.claim",
+        "conversation.release",
+        "mail.enqueue",
+        "mail.claim",
+        "mail.ack",
+        "mail.cancel",
+        "mail.prune",
+        "mail.inspect",
+        "mail.list"
+      ]
+    },
+    "idempotencyKey": { "$ref": "#/$defs/id" },
+    "data": {
+      "type": "object",
+      "maxProperties": 32
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "enum": ["run.read", "mail.inspect", "mail.list"]
+          }
+        }
+      },
+      "then": {
+        "not": { "required": ["idempotencyKey"] }
+      },
+      "else": {
+        "required": ["idempotencyKey"]
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    }
+  }
+}

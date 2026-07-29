@@ -104,6 +104,10 @@ user's existing authenticated session.
     renders, summaries, formulas, displayed values, and crops have separate
     digests and provenance. Model visibility remains unknown until transport
     evidence proves otherwise.
+13. **Fence cross-host writers.** Multi-host participants connect to one
+    durable authority that assigns coordinator epochs, rejects stale fences,
+    compares exact distributed run heads, and partitions bounded mailboxes by
+    immutable route.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
@@ -127,11 +131,19 @@ Concurrent work is isolated by immutable workspace, coordinator, run, work
 unit, agent, conversation, and turn identities. Each run has its own
 compare-and-swap ledger; hardened turns lease the provider conversation across
 all runs in one state directory; and overlapping writers serialize behind
-target-specific locks. Direct mailboxes, broadcast receipts, coordinator
-epochs, and fencing remain distributed-extension contracts rather than claims
-about the local CLI. See
+target-specific locks.
+
+When participants span hosts, the opt-in `control-serve` process becomes one
+authoritative coordination seam. It persists monotonic coordinator epochs and
+fencing tokens, an exact distributed run head, provider-conversation claims,
+and bounded partitioned mailboxes with visibility redelivery,
+acknowledgement, cancellation, and finalized-payload pruning. The local run
+ledger remains the richer browser-workflow and acceptance-evidence record.
+See
 [`coordination-v2.md`](.agents/skills/codex-chat/references/coordination-v2.md)
-for the complete local contract and the remaining distributed-fencing work.
+and
+[`distributed-coordination-v1.md`](.agents/skills/codex-chat/references/distributed-coordination-v1.md)
+for the distinct local and multi-host contracts.
 
 ## Requirements
 
@@ -229,11 +241,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 80/80 |
+| Unit tests | 100/100 |
 | Contract tests | 27/27 |
 | Chaos/recovery tests | 5/5 |
-| Local E2E tests | 2/2 |
-| Aggregate test gate | 114/114 |
+| Local E2E tests | 3/3 |
+| Aggregate test gate | 135/135 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -284,6 +296,16 @@ node .agents/skills/codex-chat/scripts/codex-chat.mjs terminal-capture \
 node .agents/skills/codex-chat/scripts/codex-chat.mjs recovery-plan \
   --state-dir /private/tmp/codex-chat-runs \
   --run-id <run-id>
+
+# CODEX_CHAT_CONTROL_TOKEN must already be populated by a secret manager.
+node .agents/skills/codex-chat/scripts/codex-chat.mjs control-serve \
+  --state-dir /var/lib/codex-chat/control \
+  --host 127.0.0.1 \
+  --port 9443
+
+node .agents/skills/codex-chat/scripts/codex-chat.mjs control \
+  --endpoint http://127.0.0.1:9443 \
+  --request /private/tmp/coordination-request.json
 ```
 
 Context outputs must be new paths in existing real directories. Delivery
@@ -297,6 +319,8 @@ directory. The CLI never replaces an existing artifact.
 | `manifest` | Create and scan a typed `COLLAB_CONTEXT_MANIFEST_V2` provenance sidecar |
 | `delivery-receipt` | Create and scan immutable, digest-bound transport evidence without claiming model visibility |
 | `terminal-capture` | Verify, scan, and publish create-once full-response and result evidence |
+| `control-serve` | Run the durable, fenced coordination authority for local or multi-host clients |
+| `control` | Execute one authenticated coordination request against that authority |
 | `record` | Append a typed transition to the hash-chained run ledger |
 | `status` | Derive the current run state and safe next action |
 | `resume` | Recover state without authorizing an unsafe resend |
@@ -333,6 +357,11 @@ model label, agentic allowance, upload capability, and API budget separately.
   remain permanent, and a run history segment is capped at 1,024 events before
   an exact-head-bound continuation; the final 32 slots are reserved for safe
   completion.
+- Distributed coordination separately bounds journal, snapshot, idempotency
+  results, retained payloads, message tombstones, mailbox count/bytes, claims,
+  and request rate. Near a lifetime segment limit, make all runs terminal and
+  archive the segment; never discard an active segment's fences or
+  idempotency state.
 - Paid API fallback and automatic credit purchase are disabled by policy.
 
 ## Development
@@ -394,11 +423,14 @@ Security assumptions and exclusions are documented in
   observed transport acceptance or rejection. Attachment upload, delta
   reconstruction, and proof of backend model visibility are not implemented;
   `modelVisible` remains `unknown`.
-- Coordinated local runs reject crossed routes, lease provider conversations,
-  and serialize import targets when every coordinator shares one canonical
-  state directory. Multi-host coordinator epochs, externally fenced leases,
-  durable partitioned mailboxes, backpressure, and cancellation remain
-  distributed-extension work.
+- The distributed control plane supports clients on several hosts but has one
+  authoritative single-writer process. Replicated consensus, automatic
+  authority-host failover, per-principal authorization, streaming/long-poll
+  delivery, dead-letter queues, broadcasts, and active-segment compaction are
+  not implemented.
+- Its bearer token defines a trusted coordination domain. Mutual TLS can
+  authenticate the channel, but certificate identities are not mapped to
+  workspace or operation permissions.
 - Hosted, production, deployment, and physical-device verification are outside
   the local E2E evidence class.
 

@@ -150,6 +150,23 @@ export async function withOwnedFileLock({
   busyCode = "RESOURCE_BUSY",
   busyMessage = "Another writer holds the resource lock.",
 }, operation) {
+  const release = await holdOwnedFileLock({
+    lockPath,
+    busyCode,
+    busyMessage,
+  });
+  try {
+    return await operation();
+  } finally {
+    await release();
+  }
+}
+
+export async function holdOwnedFileLock({
+  lockPath,
+  busyCode = "RESOURCE_BUSY",
+  busyMessage = "Another writer holds the resource lock.",
+}) {
   const absoluteLock = path.resolve(lockPath);
   const recoveryLockPath = `${absoluteLock}.recovery`;
   const lock = await acquireLock({
@@ -158,10 +175,22 @@ export async function withOwnedFileLock({
     busyCode,
     busyMessage,
   });
-  try {
-    return await operation();
-  } finally {
-    await lock.handle.close();
-    await removeOwnedLock(absoluteLock, recoveryLockPath, lock.metadata);
-  }
+  let released = false;
+  let handleClosed = false;
+  let releaseInFlight = null;
+  return () => {
+    if (released) return;
+    if (releaseInFlight) return releaseInFlight;
+    releaseInFlight = (async () => {
+      if (!handleClosed) {
+        await lock.handle.close();
+        handleClosed = true;
+      }
+      await removeOwnedLock(absoluteLock, recoveryLockPath, lock.metadata);
+      released = true;
+    })();
+    return releaseInFlight.finally(() => {
+      releaseInFlight = null;
+    });
+  };
 }

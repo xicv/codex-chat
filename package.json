@@ -1,0 +1,36 @@
+{
+  "name": "codex-chat",
+  "version": "0.1.0",
+  "description": "A safety-first Codex skill for coordinating and independently verifying a browser-based external engineering collaborator.",
+  "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xicv/codex-chat.git"
+  },
+  "homepage": "https://github.com/xicv/codex-chat#readme",
+  "bugs": {
+    "url": "https://github.com/xicv/codex-chat/issues"
+  },
+  "keywords": [
+    "codex",
+    "agent-skill",
+    "pair-programming",
+    "multi-agent",
+    "software-engineering"
+  ],
+  "type": "module",
+  "bin": {
+    "codex-chat": "./.agents/skills/codex-chat/scripts/codex-chat.mjs"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/**/*.test.mjs",
+    "test:unit": "node --test --test-concurrency=1 test/unit/*.test.mjs",
+    "test:contract": "node --test --test-concurrency=1 test/contract/*.test.mjs",
+    "test:chaos": "node --test --test-concurrency=1 test/chaos/*.test.mjs",
+    "test:e2e": "node --test --test-concurrency=1 test/e2e/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

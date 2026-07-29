@@ -1,0 +1,6 @@
+interface:
+  display_name: "Codex Chat"
+  short_description: "Orchestrate an external engineering collaborator"
+  default_prompt: "Use $codex-chat to delegate this engineering task, validate the result locally, and preserve the stated authority boundaries."
+policy:
+  allow_implicit_invocation: false

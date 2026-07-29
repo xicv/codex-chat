@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-chat.invalid/schemas/collab-context-v1.schema.json",
+  "title": "COLLAB_CONTEXT_V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "protocolVersion", "rootLabel", "files"],
+  "properties": {
+    "kind": { "const": "COLLAB_CONTEXT_V1" },
+    "protocolVersion": { "const": 1 },
+    "rootLabel": { "type": "string", "minLength": 1 },
+    "files": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "bytes", "sha256", "content"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "content": { "type": "string" }
+        }
+      }
+    }
+  }
+}

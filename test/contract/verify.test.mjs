@@ -4,6 +4,7 @@ import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { runVerification } from "../../.agents/skills/codex-chat/scripts/lib/verify.mjs";
+import { LIMITS_V1 } from "../../.agents/skills/codex-chat/scripts/lib/limits.mjs";
 import { tempDir, writeFixture } from "../helpers.mjs";
 
 test("runVerification executes a digest-pinned argv plan without a shell", async () => {
@@ -91,6 +92,43 @@ test("runVerification escalates an ignored timeout to bounded termination", asyn
   assert.equal(result.timedOut, true);
   assert.equal(result.signal, "SIGKILL");
   assert.ok(Date.now() - started < 2_000);
+});
+
+test("runVerification preserves a durable bounded receipt for output-limited execution", async () => {
+  const scratchRoot = await tempDir();
+  const sourceRoot = await tempDir();
+  const script = await writeFixture(
+    scratchRoot,
+    "noisy.mjs",
+    `process.stdout.write("x".repeat(${LIMITS_V1.verify.maxOutputBytes * 2}));\n`,
+  );
+  const plan = {
+    kind: "CODEX_CHAT_VERIFY_V1",
+    protocolVersion: 1,
+    cwd: scratchRoot,
+    sourceRoot,
+    scratchRoot,
+    argv: [process.execPath, script],
+    timeoutMs: 5_000,
+    evidenceClass: "local-synthetic",
+  };
+  const contents = `${JSON.stringify(plan)}\n`;
+  const planPath = path.join(await tempDir(), "output-limit.json");
+  await writeFile(planPath, contents);
+  const result = await runVerification({
+    planPath,
+    evidenceDir: path.join(await tempDir(), "evidence"),
+    expectedPlanSha256: createHash("sha256").update(contents).digest("hex"),
+  });
+
+  assert.equal(result.classification, "output_limited");
+  assert.equal(result.outputLimited, true);
+  assert.equal(result.outputTruncated, true);
+  assert.ok(result.observedOutputBytes > LIMITS_V1.verify.maxOutputBytes);
+  assert.ok(result.stdoutBytes <= LIMITS_V1.verify.maxOutputBytes);
+  const receipt = JSON.parse(await readFile(result.receiptPath, "utf8"));
+  assert.equal(receipt.classification, "output_limited");
+  assert.equal(receipt.executionDigest, result.executionDigest);
 });
 
 test("runVerification rejects a changed plan digest", async () => {

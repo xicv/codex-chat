@@ -28,7 +28,7 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function isSensitivePath(relativePath) {
+export function isSensitivePath(relativePath) {
   const segments = relativePath.toLowerCase().split("/");
   return segments.some((segment) =>
     segment === ".env" ||
@@ -75,7 +75,7 @@ function isWithin(root, target) {
   return target === root || target.startsWith(`${root}${path.sep}`);
 }
 
-async function readSelectedFile(canonicalRoot, relativePath) {
+export async function readSelectedFile(canonicalRoot, relativePath) {
   const absolutePath = path.join(canonicalRoot, relativePath);
   let handle;
   try {
@@ -150,7 +150,7 @@ async function readSelectedFile(canonicalRoot, relativePath) {
   }
 }
 
-async function inspectOutput(absoluteRoot, canonicalRoot, output) {
+export async function inspectOutput(absoluteRoot, canonicalRoot, output) {
   const requested = path.resolve(output);
   const requestedParent = path.dirname(requested);
   const parentInfo = await lstat(requestedParent).catch(() => null);
@@ -176,7 +176,7 @@ async function inspectOutput(absoluteRoot, canonicalRoot, output) {
   };
 }
 
-async function atomicWrite(target, contents, expectedParent) {
+export async function atomicWrite(target, contents, expectedParent) {
   const temporary = `${target}.tmp-${process.pid}-${randomUUID()}`;
   await writeFile(temporary, contents, { mode: 0o600, flag: "wx" });
   try {

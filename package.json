@@ -24,7 +24,7 @@
     "codex-chat": "./.agents/skills/codex-chat/scripts/codex-chat.mjs"
   },
   "scripts": {
-    "test": "node --test --test-concurrency=1 test/**/*.test.mjs",
+    "test": "node --test --test-concurrency=4 test/**/*.test.mjs",
     "test:unit": "node --test --test-concurrency=1 test/unit/*.test.mjs",
     "test:contract": "node --test --test-concurrency=1 test/contract/*.test.mjs",
     "test:chaos": "node --test --test-concurrency=1 test/chaos/*.test.mjs",

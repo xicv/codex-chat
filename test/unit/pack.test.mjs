@@ -3,6 +3,7 @@ import { chmod, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { packContext } from "../../.agents/skills/codex-chat/scripts/lib/pack.mjs";
+import { inspectScanner } from "../../.agents/skills/codex-chat/scripts/lib/scanner.mjs";
 import { tempDir, writeFixture } from "../helpers.mjs";
 
 test("packContext creates deterministic, sorted, content-addressed context", async () => {
@@ -59,6 +60,50 @@ test("packContext scans the exact staged artifact and rejects scanner findings",
     }),
     (error) => error.code === "SECRET_DETECTED",
   );
+});
+
+test("secret scanner subprocesses have bounded time and output", async (t) => {
+  await t.test("installed limit override", async () => {
+    await assert.rejects(
+      inspectScanner("gitleaks", {
+        processTimeoutMs: 60_000,
+        processMaxOutputBytes: 1024 * 1024,
+      }),
+      (error) => error.code === "SCANNER_LIMIT_OVERRIDE_FORBIDDEN",
+    );
+  });
+
+  await t.test("timeout", async () => {
+    const scanner = await writeFixture(
+      await tempDir(),
+      "fake-gitleaks",
+      "#!/bin/sh\nsleep 5\n",
+    );
+    await chmod(scanner, 0o700);
+    const started = Date.now();
+    await assert.rejects(
+      inspectScanner(scanner, { testMode: true, processTimeoutMs: 100 }),
+      (error) => error.code === "SCANNER_TIMEOUT",
+    );
+    assert.ok(Date.now() - started < 1_000);
+  });
+
+  await t.test("output limit", async () => {
+    const scanner = await writeFixture(
+      await tempDir(),
+      "fake-gitleaks",
+      `#!${process.execPath}\nprocess.stdout.write("x".repeat(8192));\n`,
+    );
+    await chmod(scanner, 0o700);
+    await assert.rejects(
+      inspectScanner(scanner, {
+        testMode: true,
+        processTimeoutMs: 5_000,
+        processMaxOutputBytes: 1_024,
+      }),
+      (error) => error.code === "SCANNER_OUTPUT_LIMIT",
+    );
+  });
 });
 
 test("packContext rejects a parent-directory replacement between selection and read", async () => {

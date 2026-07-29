@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-chat.invalid/schemas/delivery-receipt-plan-v2.schema.json",
+  "title": "CODEX_CHAT_DELIVERY_RECEIPT_PLAN_V2",
+  "type": "object",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "anyOf": [
+        {
+          "properties": { "providerMessageId": { "type": "string" } },
+          "required": ["providerMessageId"]
+        },
+        {
+          "properties": { "providerAttachmentId": { "type": "string" } },
+          "required": ["providerAttachmentId"]
+        },
+        {
+          "properties": {
+            "providerMessageFingerprint": { "$ref": "#/$defs/sha256" }
+          },
+          "required": ["providerMessageFingerprint"]
+        },
+        {
+          "properties": {
+            "providerAttachmentFingerprint": { "$ref": "#/$defs/sha256" }
+          },
+          "required": ["providerAttachmentFingerprint"]
+        }
+      ]
+    }
+  ],
+  "required": [
+    "kind",
+    "protocolVersion",
+    "manifestSha256",
+    "expectedEventSequence",
+    "expectedEventHash",
+    "routing",
+    "runId",
+    "contextSha256",
+    "conversationIdentity",
+    "turnId",
+    "transport",
+    "locator",
+    "observedAt",
+    "evidenceClass",
+    "providerNamespace",
+    "providerMessageId",
+    "providerAttachmentId",
+    "providerMessageFingerprint",
+    "providerAttachmentFingerprint",
+    "evidenceKind",
+    "evidenceSha256",
+    "evidenceBytes",
+    "representation"
+  ],
+  "properties": {
+    "kind": { "const": "CODEX_CHAT_DELIVERY_RECEIPT_PLAN_V2" },
+    "protocolVersion": { "const": 2 },
+    "manifestSha256": { "$ref": "#/$defs/sha256" },
+    "expectedEventSequence": { "type": "integer", "minimum": 1 },
+    "expectedEventHash": { "$ref": "#/$defs/sha256" },
+    "routing": { "$ref": "#/$defs/routing" },
+    "runId": { "$ref": "#/$defs/id" },
+    "contextSha256": { "$ref": "#/$defs/sha256" },
+    "conversationIdentity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "turnId": { "$ref": "#/$defs/id" },
+    "transport": { "$ref": "#/$defs/id" },
+    "locator": { "$ref": "#/$defs/locator" },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    },
+    "evidenceClass": { "$ref": "#/$defs/id" },
+    "providerNamespace": { "$ref": "#/$defs/id" },
+    "providerMessageId": { "$ref": "#/$defs/nullableProviderId" },
+    "providerAttachmentId": { "$ref": "#/$defs/nullableProviderId" },
+    "providerMessageFingerprint": { "$ref": "#/$defs/nullableSha256" },
+    "providerAttachmentFingerprint": { "$ref": "#/$defs/nullableSha256" },
+    "evidenceKind": {
+      "enum": [
+        "exact-payload",
+        "inline-text",
+        "provider-metadata",
+        "ui-capture"
+      ]
+    },
+    "evidenceSha256": { "$ref": "#/$defs/sha256" },
+    "evidenceBytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10485760
+    },
+    "representation": { "$ref": "#/$defs/representation" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceId",
+        "coordinatorId",
+        "workUnitId",
+        "agentId"
+      ],
+      "properties": {
+        "workspaceId": { "$ref": "#/$defs/id" },
+        "coordinatorId": { "$ref": "#/$defs/id" },
+        "workUnitId": { "$ref": "#/$defs/id" },
+        "agentId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "$ref": "#/$defs/id" },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
+    "nullableProviderId": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1, "maxLength": 1024 }
+      ]
+    },
+    "nullableSha256": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/sha256" }
+      ]
+    },
+    "representation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "representationId",
+        "representationSha256",
+        "status",
+        "attachmentOrdinal",
+        "declaredBytes",
+        "declaredDetail"
+      ],
+      "properties": {
+        "representationId": { "$ref": "#/$defs/id" },
+        "representationSha256": { "$ref": "#/$defs/sha256" },
+        "status": { "enum": ["accepted", "rejected"] },
+        "attachmentOrdinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "declaredBytes": { "type": "integer", "minimum": 0 },
+        "declaredDetail": {
+          "enum": [
+            "not-applicable",
+            "original",
+            "low",
+            "high",
+            "auto",
+            "provider-default"
+          ]
+        }
+      }
+    }
+  }
+}

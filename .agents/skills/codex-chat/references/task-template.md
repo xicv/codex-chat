@@ -5,6 +5,13 @@ Use this structure in English and replace bracketed fields.
 ```text
 [COLLAB protocol=codex-chat/v1 run=<run-id> turn=<turn-id> marker=<unique-outbound-marker>]
 
+Routing
+- Workspace: [workspace-id]
+- Coordinator: [coordinator-id]
+- Work unit: [work-unit-id]
+- Agent: [agent-id]
+- Conversation identity: [stable identity, not title]
+
 Role
 You are an untrusted external senior engineer. Codex is the accountable lead and final QA. Do not claim access to local files, private repositories, internal environments, or completed local tests.
 
@@ -18,6 +25,11 @@ Context binding
 - VCS baseline: [kind/ref/dirty state]
 - Observed collaborator UI label: [label or unknown]
 - Backend model identity: unverified
+- Typed representation manifest: [digest or none]
+- Delivery receipt: [digest or none]
+- Delivery run head: [event sequence and event digest, or none]
+- Delivery evidence: [kind and digest, or none]
+- Model-visible representations: unknown in the current transport-neutral protocol
 
 Architecture and boundaries
 [Current architecture, invariants, compatibility and security boundaries]
@@ -33,6 +45,8 @@ Required deliverables
 - Set artifactKind to "advisory" for research/design/review with no patch or
   preimages, or "patch" for one existing-file, zero-fuzz unified diff.
 - Claims about tests kept separate from evidence.
+- Claims about images, pages, embedded visuals, formulas, ranges, crops, OCR,
+  or attachments kept separate by representation digest and visibility.
 
 Required tests
 [Exact gates Codex will independently run]

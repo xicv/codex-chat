@@ -13,6 +13,8 @@ Protocol v1 uses the constants exported by `scripts/lib/limits.mjs`.
 | Unified diff lines | 4,096 |
 | Unified diff hunks | 64 |
 | Postimage bytes | 262,144 |
+| Scanner subprocess | 5,000 ms |
+| Scanner output | 131,072 bytes |
 | Verification plan bytes | 32,768 |
 | Verification argv items | 64 |
 | Bytes per argv item | 8,192 |
@@ -24,3 +26,31 @@ Protocol v1 uses the constants exported by `scripts/lib/limits.mjs`.
 The ledger retains the 128 most recent general idempotency keys. Outbound reservation and confirmation keys are retained for the full run.
 
 Changing a limit is a protocol/contract change and requires corresponding tests and schema updates.
+
+Typed manifest v2 uses these fixed limits:
+
+| Area | Limit |
+| --- | ---: |
+| Manifest plan | 131,072 bytes |
+| Representations | 64 |
+| Bytes per representation | 10,485,760 |
+| Aggregate representation bytes | 52,428,800 |
+| Serialized sidecar | 524,288 bytes |
+
+The larger representation limits do not imply that a transport can upload the
+files or that a model can see them. Transport capability and delivery evidence
+are separate gates.
+
+Delivery receipt v2 uses these fixed limits:
+
+| Area | Limit |
+| --- | ---: |
+| Input context manifest | 524,288 bytes |
+| Delivery receipt plan | 65,536 bytes |
+| Raw observation evidence | 10,485,760 bytes |
+| Attachment ordinal slots | 64 |
+| Provider identifier | 1,024 bytes |
+| Serialized delivery receipt | 65,536 bytes |
+
+These limits bound one immutable representation observation per receipt. They
+do not grant transport upload capacity or establish model visibility.

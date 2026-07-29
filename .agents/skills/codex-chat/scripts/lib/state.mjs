@@ -5,6 +5,7 @@ import {
   mkdir,
   open,
   readFile,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -14,6 +15,7 @@ import { fail } from "./errors.mjs";
 import { LIMITS_V1 } from "./limits.mjs";
 
 const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const ROUTING_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const TERMINAL = new Set(["accepted", "blocked"]);
 const OUTBOUND_EVENTS = new Set(["send_reserved", "send_confirmed"]);
 
@@ -46,6 +48,7 @@ const EVENT_STATES = Object.freeze({
   },
   review_started: { from: ["response_terminal"], to: "reviewing" },
   validation_started: { from: ["reviewing"], to: "validating" },
+  verification_recorded: { from: ["validating"], to: "=" },
   needs_revision: { from: ["reviewing", "validating"], to: "needs_revision" },
   accepted: { from: ["validating"], to: "accepted" },
   blocked: { from: ["*"], to: "blocked" },
@@ -78,6 +81,35 @@ function stable(value) {
 
 function digest(value) {
   return createHash("sha256").update(stable(value)).digest("hex");
+}
+
+function bytesDigest(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function validRoutingBase(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    ["workspaceId", "coordinatorId", "workUnitId"].every((key) =>
+      ROUTING_ID.test(value[key] ?? "")
+    ) &&
+    Object.keys(value).every((key) =>
+      ["workspaceId", "coordinatorId", "workUnitId"].includes(key)
+    )
+  );
+}
+
+function routingMatches(expected, actual, { includeAgent = false } = {}) {
+  if (!expected || !actual || typeof actual !== "object") return false;
+  const keys = [
+    "workspaceId",
+    "coordinatorId",
+    "workUnitId",
+    ...(includeAgent ? ["agentId"] : []),
+  ];
+  return keys.every((key) => expected[key] === actual[key]);
 }
 
 function validateRunId(runId) {
@@ -399,6 +431,136 @@ function assertTerminalResponseBinding(current, data) {
       "response_terminal must bind the active turn, expected terminal marker, full response digest, result envelope digest, and conversation identity.",
     );
   }
+  if (
+    current?.routing &&
+    (
+      !routingMatches(current.outbound?.routing, data.routing, { includeAgent: true }) ||
+      data.captureState !== "terminal" ||
+      data.truncated !== false ||
+      !/^[a-f0-9]{64}$/.test(data.captureSha256 ?? "") ||
+      (
+        current.outbound?.confirmationEvidence?.providerMessageFingerprint &&
+        data.providerMessageFingerprint !==
+          current.outbound.confirmationEvidence.providerMessageFingerprint
+      )
+    )
+  ) {
+    fail(
+      "TERMINAL_RESPONSE_ROUTING_INVALID",
+      "response_terminal must bind the routed work unit and a complete non-truncated terminal capture.",
+    );
+  }
+}
+
+async function validateVerificationReceipt(current, data) {
+  if (
+    !current?.routing ||
+    !Array.isArray(current.requiredGates) ||
+    typeof data.gateId !== "string" ||
+    !current.requiredGates.includes(data.gateId) ||
+    !path.isAbsolute(data.receiptPath ?? "") ||
+    !/^[a-f0-9]{64}$/.test(data.receiptSha256 ?? "")
+  ) {
+    fail(
+      "VERIFICATION_RECEIPT_INVALID",
+      "verification_recorded requires a declared gate and an absolute digest-bound receipt.",
+    );
+  }
+  const receiptBytes = await readFile(path.resolve(data.receiptPath)).catch((error) => {
+    if (error.code === "ENOENT") {
+      fail("VERIFICATION_RECEIPT_MISSING", "Verification receipt does not exist.");
+    }
+    throw error;
+  });
+  if (bytesDigest(receiptBytes) !== data.receiptSha256) {
+    fail("VERIFICATION_RECEIPT_DIGEST_MISMATCH", "Verification receipt digest does not match.");
+  }
+  let receipt;
+  try {
+    receipt = JSON.parse(receiptBytes);
+  } catch {
+    fail("VERIFICATION_RECEIPT_INVALID", "Verification receipt is not valid JSON.");
+  }
+  const { executionDigest, ...unsignedReceipt } = receipt ?? {};
+  if (
+    receipt?.kind !== "CODEX_CHAT_VERIFY_RECEIPT_V1" ||
+    receipt.protocolVersion !== 1 ||
+    !/^[a-f0-9]{64}$/.test(executionDigest ?? "") ||
+    digest(unsignedReceipt) !== executionDigest ||
+    receipt.classification !== "success" ||
+    receipt.exitCode !== 0 ||
+    receipt.signal !== null ||
+    receipt.timedOut !== false ||
+    receipt.outputLimited === true
+  ) {
+    fail(
+      "VERIFICATION_UNSUCCESSFUL",
+      "Verification receipt is invalid, failed, signaled, timed out, or output-limited.",
+    );
+  }
+  const expectedRouting = {
+    ...current.routing,
+    agentId: current.outbound?.routing?.agentId,
+  };
+  const bindings = receipt.bindings;
+  if (
+    !routingMatches(expectedRouting, bindings, { includeAgent: true }) ||
+    bindings.runId !== current.runId ||
+    bindings.turnId !== current.outbound?.turnId ||
+    bindings.contextSha256 !== current.outbound?.payloadSha256 ||
+    bindings.gateId !== data.gateId ||
+    !/^[a-f0-9]{64}$/.test(bindings.applicationKey ?? "") ||
+    !/^[a-f0-9]{64}$/.test(bindings.postimageSha256 ?? "") ||
+    path.resolve(receipt.sourceRoot ?? "") !==
+      path.resolve(await realpath(current.sourceRoot))
+  ) {
+    fail(
+      "VERIFICATION_BINDING_MISMATCH",
+      "Verification receipt is not bound to the active routed work unit and artifact.",
+    );
+  }
+  return {
+    gateId: data.gateId,
+    receiptPath: path.resolve(data.receiptPath),
+    receiptSha256: data.receiptSha256,
+    executionDigest,
+    evidenceClass: receipt.evidenceClass,
+    applicationKey: bindings.applicationKey,
+    postimageSha256: bindings.postimageSha256,
+  };
+}
+
+async function revalidateVerificationSet(current) {
+  const records = current?.verifications ?? {};
+  const required = current?.requiredGates ?? [];
+  if (
+    !current?.routing ||
+    required.length === 0 ||
+    required.some((gateId) => !records[gateId])
+  ) {
+    fail("VERIFICATION_REQUIRED", "All declared verification gates must be recorded before acceptance.");
+  }
+  const values = required.map((gateId) => records[gateId]);
+  if (
+    new Set(values.map(({ applicationKey }) => applicationKey)).size !== 1 ||
+    new Set(values.map(({ postimageSha256 }) => postimageSha256)).size !== 1
+  ) {
+    fail("VERIFICATION_BINDING_MISMATCH", "Verification gates do not bind the same artifact.");
+  }
+  for (const record of values) {
+    const revalidated = await validateVerificationReceipt(current, {
+      gateId: record.gateId,
+      receiptPath: record.receiptPath,
+      receiptSha256: record.receiptSha256,
+    });
+    if (stable(revalidated) !== stable(record)) {
+      fail(
+        "VERIFICATION_BINDING_MISMATCH",
+        "A recorded verification receipt no longer matches the active routed work unit.",
+      );
+    }
+  }
+  return digest(values);
 }
 
 function reduce(current, event, data, at) {
@@ -423,6 +585,21 @@ function reduce(current, event, data, at) {
   }
   if (event === "prepared" && !path.isAbsolute(data.sourceRoot ?? "")) {
     fail("SOURCE_ROOT_INVALID", "prepared requires an absolute sourceRoot.");
+  }
+  if (event === "prepared" && (data.routing !== undefined || data.requiredGates !== undefined)) {
+    if (
+      !validRoutingBase(data.routing) ||
+      !Array.isArray(data.requiredGates) ||
+      data.requiredGates.length === 0 ||
+      data.requiredGates.length > 16 ||
+      new Set(data.requiredGates).size !== data.requiredGates.length ||
+      data.requiredGates.some((gateId) => !ROUTING_ID.test(gateId ?? ""))
+    ) {
+      fail(
+        "ROUTING_INVALID",
+        "Coordinated runs require immutable workspace/coordinator/work-unit IDs and unique required gates.",
+      );
+    }
   }
   if (event === "send_reserved") {
     if (
@@ -453,6 +630,18 @@ function reduce(current, event, data, at) {
         "The first outbound payload must match the prepared context digest.",
       );
     }
+    if (
+      current?.routing &&
+      (
+        !routingMatches(current.routing, data.routing) ||
+        !ROUTING_ID.test(data.routing?.agentId ?? "")
+      )
+    ) {
+      fail(
+        "ROUTING_MISMATCH",
+        "send_reserved must bind the prepared coordinator/work-unit route and one agent.",
+      );
+    }
   }
   if (event === "response_terminal") assertTerminalResponseBinding(current, data);
   const phase = rule.to === "=" ? currentPhase : rule.to;
@@ -472,6 +661,31 @@ function reduce(current, event, data, at) {
       data.turnId !== current?.outbound?.turnId
     ) {
       fail("SEND_CONFIRMATION_INVALID", "send_confirmed turnId must match the reservation.");
+    }
+    if (
+      current?.routing &&
+      (
+        !routingMatches(current.outbound?.routing, data.routing, { includeAgent: true }) ||
+        data.marker !== current.outbound.marker ||
+        data.conversationIdentity !== current.outbound.conversationIdentity ||
+        !ROUTING_ID.test(data.transportKind ?? "") ||
+        !ROUTING_ID.test(data.confirmationEvidenceClass ?? "") ||
+        typeof data.observedAt !== "string" ||
+        Number.isNaN(Date.parse(data.observedAt)) ||
+        !data.locator ||
+        !ROUTING_ID.test(data.locator.type ?? "") ||
+        typeof data.locator.value !== "string" ||
+        data.locator.value.length === 0 ||
+        (
+          data.providerMessageFingerprint !== null &&
+          !/^[a-f0-9]{64}$/.test(data.providerMessageFingerprint ?? "")
+        )
+      )
+    ) {
+      fail(
+        "SEND_CONFIRMATION_EVIDENCE_INVALID",
+        "send_confirmed must bind the reserved route, marker, conversation, transport, locator, and observation provenance.",
+      );
     }
     collaboration.conversationUrl = data.conversationUrl ?? collaboration.conversationUrl;
     collaboration.outboundTurnId = data.turnId;
@@ -495,10 +709,28 @@ function reduce(current, event, data, at) {
           expectedTerminalMarker: data.expectedTerminalMarker,
           payloadSha256: data.payloadSha256,
           conversationIdentity: data.conversationIdentity,
+          routing: current?.routing
+            ? { ...current.routing, agentId: data.routing.agentId }
+            : null,
+          confirmationEvidence: null,
           confirmed: false,
         }
       : event === "send_confirmed"
-        ? { ...current.outbound, confirmed: true }
+        ? {
+            ...current.outbound,
+            confirmed: true,
+            confirmationEvidence: current?.routing
+              ? {
+                  marker: data.marker,
+                  conversationIdentity: data.conversationIdentity,
+                  transportKind: data.transportKind,
+                  observedAt: data.observedAt,
+                  confirmationEvidenceClass: data.confirmationEvidenceClass,
+                  providerMessageFingerprint: data.providerMessageFingerprint,
+                  locator: data.locator,
+                }
+              : null,
+          }
         : current?.outbound ?? null;
   let resources = current?.resources ?? initialResources();
   if (event === "resource_observation") {
@@ -524,6 +756,20 @@ function reduce(current, event, data, at) {
           reason: data.reason ?? "Controller and collaborator allowances are exhausted.",
         }
       : current?.suspended ?? null;
+  const verifications =
+    event === "send_reserved"
+      ? {}
+      : { ...(current?.verifications ?? {}) };
+  if (event === "verification_recorded") {
+    const existing = verifications[data.verification.gateId];
+    if (existing && stable(existing) !== stable(data.verification)) {
+      fail(
+        "VERIFICATION_GATE_CONFLICT",
+        `Verification gate already records different evidence: ${data.verification.gateId}`,
+      );
+    }
+    verifications[data.verification.gateId] = data.verification;
+  }
   return {
     phase,
     collaboration,
@@ -534,6 +780,15 @@ function reduce(current, event, data, at) {
     suspended,
     sourceRoot: current?.sourceRoot ?? data.sourceRoot ?? null,
     contextSha256: current?.contextSha256 ?? data.contextSha256 ?? null,
+    routing: current?.routing ?? data.routing ?? null,
+    requiredGates: current?.requiredGates ?? data.requiredGates ?? [],
+    verifications,
+    verificationSetSha256:
+      event === "accepted"
+        ? data.verificationSetSha256 ?? current?.verificationSetSha256 ?? null
+        : event === "send_reserved"
+          ? null
+          : current?.verificationSetSha256 ?? null,
     nextAction: suspended ? "wait-until-resume-after-do-not-resend" : NEXT_ACTION[phase],
   };
 }
@@ -581,6 +836,17 @@ export async function recordEvent({
     } catch (error) {
       if (error.code !== "RUN_NOT_FOUND") throw error;
       current = null;
+    }
+
+    if (event === "verification_recorded") {
+      const verification = await validateVerificationReceipt(current, data);
+      data = { ...data, verification };
+    }
+    if (event === "accepted" && current?.routing) {
+      data = {
+        ...data,
+        verificationSetSha256: await revalidateVerificationSet(current),
+      };
     }
 
     if (current && idempotencyKey) {

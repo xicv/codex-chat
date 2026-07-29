@@ -12,6 +12,12 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
   const scratch = await tempDir("codex-chat-e2e-scratch-");
   const stateDir = await tempDir("codex-chat-e2e-state-");
   const runId = "e2e-run";
+  const routing = {
+    workspaceId: "workspace-e2e",
+    coordinatorId: "coordinator-e2e",
+    workUnitId: "work-unit-e2e",
+  };
+  const outboundRouting = { ...routing, agentId: "agent-e2e" };
   const before = "export const answer = 41;\n";
   const after = "export const answer = 42;\n";
   await writeFixture(root, "src/answer.mjs", before);
@@ -39,21 +45,35 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
       "--expected-state", expectedState ?? "null", "--data", dataPath,
       "--idempotency-key", `${sequence}-${event}`,
     ]);
-    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.code, 0, JSON.stringify(result.json));
     return result.json.data.state;
   }
 
-  await record("prepared", 0, null, { contextSha256, sourceRoot: root });
+  await record("prepared", 0, null, {
+    contextSha256,
+    sourceRoot: root,
+    routing,
+    requiredGates: ["synthetic-e2e"],
+  });
   await record("send_reserved", 1, "prepared", {
     turnId: "turn-1",
     marker: "VISIBLE_E2E_MARKER",
     expectedTerminalMarker: "CODEX_CHAT_RESULT_COMPLETE",
     payloadSha256: contextSha256,
     conversationIdentity: "synthetic-conversation",
+    routing: outboundRouting,
   });
   await record("send_confirmed", 2, "send_reserved", {
     turnId: "turn-1",
+    marker: "VISIBLE_E2E_MARKER",
+    conversationIdentity: "synthetic-conversation",
     conversationUrl: "https://chatgpt.com/c/synthetic",
+    routing: outboundRouting,
+    transportKind: "synthetic-transport",
+    observedAt: "2026-07-29T00:00:00.000Z",
+    confirmationEvidenceClass: "synthetic-thread-observation",
+    providerMessageFingerprint: sha256("synthetic-provider-message"),
+    locator: { type: "thread-id", value: "synthetic-conversation" },
   });
   const disconnected = await record("transport_disconnected", 3, "send_confirmed", {
     error: "Transport closed",
@@ -87,6 +107,11 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
     responseSha256: "f".repeat(64),
     resultEnvelopeSha256: sha256(resultRaw),
     conversationIdentity: "synthetic-conversation",
+    routing: outboundRouting,
+    captureState: "terminal",
+    truncated: false,
+    captureSha256: sha256(resultRaw),
+    providerMessageFingerprint: sha256("synthetic-provider-message"),
   });
   await record("review_started", 5, "response_terminal");
 
@@ -129,6 +154,15 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
     argv: [process.execPath, "test.mjs"],
     timeoutMs: 10_000,
     evidenceClass: "local-synthetic-e2e",
+    bindings: {
+      runId,
+      turnId: "turn-1",
+      contextSha256,
+      ...outboundRouting,
+      gateId: "synthetic-e2e",
+      applicationKey: imported.json.data.applicationKey,
+      postimageSha256: imported.json.data.outputSha256,
+    },
   })}\n`;
   await writeFile(planPath, planContents);
   const planSha256 = sha256(planContents);
@@ -140,9 +174,40 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
   assert.equal(verified.code, 0, verified.stderr);
   assert.equal(verified.json.data.exitCode, 0);
 
-  await record("accepted", 7, "validating", {
-    verificationPlanSha256: verified.json.data.planSha256,
+  const prematureAcceptance = await runCli([
+    "record", "--state-dir", stateDir, "--run-id", runId,
+    "--event", "accepted", "--expected-sequence", "7",
+    "--expected-state", "validating",
+    "--data-json", "{}",
+    "--idempotency-key", "premature-acceptance",
+  ]);
+  assert.equal(prematureAcceptance.code, 2);
+  assert.equal(prematureAcceptance.json.error.code, "VERIFICATION_REQUIRED");
+
+  const receiptBytes = await readFile(verified.json.data.receiptPath);
+  await record("verification_recorded", 7, "validating", {
+    gateId: "synthetic-e2e",
+    receiptPath: verified.json.data.receiptPath,
+    receiptSha256: sha256(receiptBytes),
   });
+  await writeFile(
+    verified.json.data.receiptPath,
+    Buffer.concat([receiptBytes, Buffer.from("tampered")]),
+  );
+  const changedReceiptAcceptance = await runCli([
+    "record", "--state-dir", stateDir, "--run-id", runId,
+    "--event", "accepted", "--expected-sequence", "8",
+    "--expected-state", "validating",
+    "--data-json", "{}",
+    "--idempotency-key", "changed-receipt-acceptance",
+  ]);
+  assert.equal(changedReceiptAcceptance.code, 2);
+  assert.equal(
+    changedReceiptAcceptance.json.error.code,
+    "VERIFICATION_RECEIPT_DIGEST_MISMATCH",
+  );
+  await writeFile(verified.json.data.receiptPath, receiptBytes);
+  await record("accepted", 8, "validating");
   const status = await runCli([
     "status", "--state-dir", stateDir, "--run-id", runId,
   ]);

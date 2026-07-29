@@ -1,5 +1,9 @@
 # codex-chat
 
+<p align="center">
+  <img src="assets/codex-chat-icon.png" width="128" alt="Two collaborators exchanging a verified handoff">
+</p>
+
 `codex-chat` is a safety-first Codex skill for coordinating a browser-based
 external engineering collaborator without turning the user into a manual
 copy-and-paste relay.
@@ -68,7 +72,8 @@ user's existing authenticated session.
    caches, and build output are denied.
 4. **Scan the exact egress artifact.** The serialized context sent to the
    collaborator is identity-checked with `gitleaks`, measured, and bound to a
-   SHA-256 digest.
+   SHA-256 digest. Parent gitleaks configuration is removed; inline allow
+   directives and ambient ignore files are disabled in an isolated scan policy.
 5. **At-most-once automatic submission.** A durable visible marker and
    idempotency record are created before sending. Ambiguity never authorizes a
    blind retry.
@@ -82,15 +87,43 @@ user's existing authenticated session.
    working tree.
 9. **Verify independently.** Test claims from the collaborator are not
    evidence. Codex runs digest-pinned argument-vector commands locally without
-   a shell.
+   a shell. Coordinated acceptance re-hashes every required success receipt.
 10. **Fail closed.** Corrupt state, changed paths, missing scanners, exhausted
     usage, ambiguous sends, and malformed responses stop or suspend the
     workflow.
+11. **Route by immutable identity.** Multi-agent work binds workspace,
+    coordinator, run, work unit, agent, conversation, and turn. Titles and
+    visible model labels are never routing keys.
+12. **Separate source from representations.** Exact bytes, excerpts, OCR, page
+    renders, summaries, formulas, displayed values, and crops have separate
+    digests and provenance. Model visibility remains unknown until transport
+    evidence proves otherwise.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
 security contracts under
 [`references/`](.agents/skills/codex-chat/references/).
+
+## Context fidelity and coordination
+
+The v2 context sidecar keeps every representation explicit. Original code,
+text, images, rendered pages, OCR, excerpts, summaries, spreadsheet values,
+and formulas each carry their own digest, byte count, fidelity, locator, and
+transformation provenance. A derived representation cannot silently stand in
+for its source.
+
+Transport evidence is separate from context provenance. A delivery receipt
+binds one representation and attachment ordinal to the exact coordinated run
+head, route, conversation, turn, provider observation, and scanned raw
+evidence. Provider acceptance still leaves `modelVisible: "unknown"`.
+
+Concurrent work is isolated by immutable workspace, coordinator, run, work
+unit, agent, conversation, and turn identities. Each run has its own
+compare-and-swap ledger; direct messages use route-specific mailboxes;
+broadcasts are evidence-only; and overlapping writers serialize behind
+target-specific locks. See
+[`coordination-v2.md`](.agents/skills/codex-chat/references/coordination-v2.md)
+for the complete local contract and the remaining distributed-fencing work.
 
 ## Requirements
 
@@ -116,15 +149,18 @@ cd codex-chat
 
 ### Personal skill
 
-Copy the skill to your personal skills directory:
+Synchronize the skill to the standard personal skills directory:
 
 ```bash
-mkdir -p "$HOME/.agents/skills"
-cp -R .agents/skills/codex-chat "$HOME/.agents/skills/codex-chat"
+mkdir -p "$HOME/.agents/skills/codex-chat"
+rsync -a --delete \
+  .agents/skills/codex-chat/ \
+  "$HOME/.agents/skills/codex-chat/"
 ```
 
-Codex detects skill changes automatically. If the skill does not appear in an
-already-open task, start a new task or restart Codex.
+The trailing slashes are intentional: they update the existing skill contents
+without creating a nested `codex-chat/codex-chat` directory. Codex detects
+skill changes automatically. If an update does not appear, restart Codex.
 
 ## Quick start
 
@@ -177,17 +213,22 @@ The MVP was developed by applying its own responsibility split:
    canonicalize a missing source root.
 5. Codex fixed the defect test-first, imported the exact external result, sent
    one final bounded recheck, and reran every local gate.
+6. A continuation run then examined typed multimodal context and
+   multi-coordinator isolation. The external advisory led to run-head-bound,
+   immutable delivery slots with scanned raw evidence and idempotent replay.
 
-Final local evidence for that run:
+Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 37/37 |
-| Contract tests | 21/21 |
+| Unit tests | 73/73 |
+| Contract tests | 27/27 |
 | Chaos/recovery tests | 5/5 |
-| Local synthetic E2E | 1/1 |
-| Skill validator | Passed |
-| Source and install secret scans | Clean |
+| Local E2E tests | 2/2 |
+| Aggregate test gate | 107/107 |
+| Independent scratch verification | Passed |
+| Repository source scan | Clean |
+| Installed skill parity / secret scan | Exact / Clean |
 
 This example is intentionally not presented as production proof. It
 demonstrates local orchestration, recovery, correction, and verification.
@@ -213,15 +254,30 @@ node .agents/skills/codex-chat/scripts/codex-chat.mjs pack \
   --root "$PWD" \
   --include src/example.mjs \
   --output /private/tmp/codex-chat-context.json
+
+node .agents/skills/codex-chat/scripts/codex-chat.mjs manifest \
+  --root "$PWD" \
+  --plan /private/tmp/codex-chat-manifest-plan.json \
+  --output /private/tmp/codex-chat-manifest.json
+
+node .agents/skills/codex-chat/scripts/codex-chat.mjs delivery-receipt \
+  --state-dir /private/tmp/codex-chat-runs \
+  --run-id <run-id> \
+  --manifest /private/tmp/codex-chat-manifest.json \
+  --plan /private/tmp/codex-chat-delivery-plan.json \
+  --evidence /private/tmp/codex-chat-provider-evidence.bin
 ```
 
-The context output must be a new path in an existing real directory outside
-the source repository. The CLI never replaces an existing artifact.
+Context outputs must be new paths in existing real directories. Delivery
+receipts use create-only, content-addressed paths beneath the durable run state
+directory. The CLI never replaces an existing artifact.
 
 | Command | Purpose |
 | --- | --- |
 | `preflight` | Validate source selection, state location, VCS metadata, and scanner availability |
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
+| `manifest` | Create and scan a typed `COLLAB_CONTEXT_MANIFEST_V2` provenance sidecar |
+| `delivery-receipt` | Create and scan immutable, digest-bound transport evidence without claiming model visibility |
 | `record` | Append a typed transition to the hash-chained run ledger |
 | `status` | Derive the current run state and safe next action |
 | `resume` | Recover state without authorizing an unsafe resend |
@@ -247,6 +303,9 @@ model label, agentic allowance, upload capability, and API budget separately.
   run then permanently records degraded reviewer independence.
 - A changed or unobservable model label is reported as an observation, never
   treated as proof of backend identity.
+- A delivery receipt binds one representation and attachment ordinal to a
+  confirmed routed turn, its exact ledger head, and scanned raw observation
+  evidence. It proves neither upload automation nor model visibility.
 - Paid API fallback and automatic credit purchase are disabled by policy.
 
 ## Development
@@ -260,6 +319,9 @@ npm run test:chaos
 npm run test:e2e
 npm test
 ```
+
+The aggregate `npm test` gate runs up to four independent test files in
+parallel. Focused suites remain serialized to keep failure diagnosis simple.
 
 Project structure:
 
@@ -301,11 +363,15 @@ Security assumptions and exclusions are documented in
 - The MVP imports at most one existing text-file patch per result.
 - The CLI provides evidence and state management; it does not itself automate a
   browser.
+- The v2 manifest records typed representations, and the receipt command binds
+  observed transport acceptance or rejection. Attachment upload, delta
+  reconstruction, and proof of backend model visibility are not implemented;
+  `modelVisible` remains `unknown`.
+- Coordinated local runs reject crossed routes and serialize import targets,
+  but distributed coordinator epochs, fenced leases, and partitioned mailboxes
+  remain v2 work.
 - Hosted, production, deployment, and physical-device verification are outside
   the local E2E evidence class.
-- Acceptance is recorded only after independent gates pass, but a future
-  protocol version should mechanically bind the `accepted` transition to
-  immutable successful verification receipts.
 
 ## References
 

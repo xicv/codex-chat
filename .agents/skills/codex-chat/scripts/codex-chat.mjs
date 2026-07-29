@@ -11,7 +11,12 @@ import { packContext } from "./lib/pack.mjs";
 import { createContextManifest } from "./lib/context-manifest.mjs";
 import { createDeliveryReceipt } from "./lib/delivery-receipt.mjs";
 import { importResult, parseResultEnvelope } from "./lib/import.mjs";
+import { buildRecoveryPlan } from "./lib/recovery-plan.mjs";
 import { loadRun, recordEvent } from "./lib/state.mjs";
+import {
+  createTerminalCaptureReceipt,
+  revalidateActiveTerminalCapture,
+} from "./lib/terminal-capture.mjs";
 import { runVerification } from "./lib/verify.mjs";
 
 const CLI_VERSION = "0.1.0";
@@ -21,9 +26,11 @@ const COMMANDS = [
   "pack",
   "manifest",
   "delivery-receipt",
+  "terminal-capture",
   "record",
   "status",
   "resume",
+  "recovery-plan",
   "import",
   "verify",
 ];
@@ -156,6 +163,19 @@ async function main() {
     );
     return;
   }
+  if (command === "terminal-capture") {
+    emitSuccess(
+      command,
+      await createTerminalCaptureReceipt({
+        stateDir,
+        runId: required(options, "run-id"),
+        capturePath: required(options, "capture"),
+        resultPath: required(options, "result"),
+        scanner: "gitleaks",
+      }),
+    );
+    return;
+  }
   if (command === "record") {
     const event = required(options, "event");
     const expectedStateValue = required(options, "expected-state");
@@ -178,11 +198,20 @@ async function main() {
     emitSuccess(command, result);
     return;
   }
-  if (command === "status" || command === "resume") {
+  if (
+    command === "status" ||
+    command === "resume" ||
+    command === "recovery-plan"
+  ) {
     const state = await loadRun({
       stateDir,
       runId: required(options, "run-id"),
     });
+    const recoveryPlan = buildRecoveryPlan(state);
+    if (command === "recovery-plan") {
+      emitSuccess(command, recoveryPlan);
+      return;
+    }
     emitSuccess(command, {
       state,
       sendAllowed: false,
@@ -190,6 +219,7 @@ async function main() {
         state.phase === "send_reserved",
       resendAllowed: false,
       nextAction: state.nextAction,
+      recoveryPlan,
     });
     return;
   }
@@ -201,6 +231,13 @@ async function main() {
         "IMPORT_STATE_INVALID",
         `Import is only allowed while reviewing a terminal response; current state is ${state.phase}.`,
       );
+    }
+    if (state.outbound?.outboundBindingVersion === 2) {
+      await revalidateActiveTerminalCapture({
+        stateDir,
+        runId,
+        current: state,
+      });
     }
     const resultPath = required(options, "result");
     const resultBytes = await readFile(path.resolve(resultPath));

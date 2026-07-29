@@ -9,6 +9,8 @@
   not automate file upload or prove model visibility.
 - A v2 delivery receipt records digest-bound transport observations only. It
   does not upload, send, prove backend model visibility, or authorize resend.
+- A hardened terminal capture receipt stores and binds the full response and
+  exact extracted result. It does not make external claims trusted.
 - Paid API fallback and credit purchase are disabled by policy.
 - Authentication and verification challenges are user-only actions.
 - Source mutation is limited to an explicit scratch directory whose canonical identity is distinct from and non-nested with the recorded source root. Promotion to the primary worktree is a separate Codex-reviewed action under the user's authority.
@@ -47,6 +49,16 @@ failed scan or stale stream head publishes no authoritative slot. Raw provider
 identifiers may themselves look secret-shaped, so prefer recorded SHA-256
 fingerprints where the provider exposes enough stable evidence.
 
+Terminal capture inputs are no-follow, size-bounded UTF-8/LF files. The helper
+requires exactly one ordered boundary pair, an exact extracted result match,
+the expected final marker, and the active run/turn/context/route/provider
+binding. It scans the capture, result, and generated receipt together before
+publishing content-addressed objects and a create-once authoritative slot
+beneath the run directory. `response_terminal`, review start, import, and
+acceptance re-read and hash the receipt, recompute and verify its authoritative
+slot, and re-read both objects. Missing, changed, truncated, crossed, or
+reconstructed evidence fails closed.
+
 Never include `.env`, API keys, tokens, private keys, cookies, credentials, browser state, databases, runtime state, caches, build products, or VCS internals.
 
 ## Trust boundary
@@ -69,11 +81,22 @@ digest/byte mismatches, out-of-range or already-bound attachment ordinals,
 changed evidence bytes, and terminal status with no provider evidence.
 Transport acceptance does not change `modelVisible`.
 
+Hardened outbound turns also bind the exact task-envelope digest separately
+from the context digest. All local coordinators for a workspace must share one
+canonical state directory. Its provider-conversation registry leases both the
+logical conversation identity and the confirmed canonical provider locator.
+This prevents local cross-coordinator interleaving only; different state
+directories or hosts require an external fenced lease service.
+
 A browser UI label is an observation with source and time. Backend model identity remains `unverified`.
 
 ## Recovery
 
 After `send_confirmed`, absence of evidence is not evidence of failed delivery. Disconnect, timeout, idle, missing output, stale UI, and changed allowance reset time never permit resend.
+
+`recovery-plan` exposes identifiers and allowed observation events to a
+persistent adapter but grants no send capability. Both `sendAllowed` and
+`resendAllowed` remain false.
 
 If both controller and collaborator capacity are unavailable, persist `SUSPENDED_BOTH_LIMITED` plus `resumeAfter`, resource provenance, conversation link, turn identifier, and next observation action. Do not purchase credits or switch to paid API.
 

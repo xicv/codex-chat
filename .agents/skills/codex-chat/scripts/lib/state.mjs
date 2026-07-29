@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   appendFile,
   chmod,
@@ -7,17 +7,31 @@ import {
   readFile,
   realpath,
   rename,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import {
+  claimConversationLease,
+  releaseConversationLeases,
+} from "./conversation-lease.mjs";
 import { fail } from "./errors.mjs";
+import { withOwnedFileLock } from "./file-lock.mjs";
 import { LIMITS_V1 } from "./limits.mjs";
 
 const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const ROUTING_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const SHA256 = /^[a-f0-9]{64}$/;
 const TERMINAL = new Set(["accepted", "blocked"]);
 const OUTBOUND_EVENTS = new Set(["send_reserved", "send_confirmed"]);
+const COMPLETION_EVENTS = new Set([
+  "response_terminal",
+  "review_started",
+  "validation_started",
+  "verification_recorded",
+  "accepted",
+  "blocked",
+  "provider_terminal_failure",
+]);
 
 const EVENT_STATES = Object.freeze({
   prepared: { from: [null], to: "prepared" },
@@ -110,6 +124,78 @@ function routingMatches(expected, actual, { includeAgent = false } = {}) {
     ...(includeAgent ? ["agentId"] : []),
   ];
   return keys.every((key) => expected[key] === actual[key]);
+}
+
+function validParent(value) {
+  return (
+    value === undefined ||
+    value === null ||
+    (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      RUN_ID.test(value.runId ?? "") &&
+      Number.isInteger(value.eventSequence) &&
+      value.eventSequence > 0 &&
+      SHA256.test(value.eventHash ?? "") &&
+      Object.keys(value).every((key) =>
+        ["runId", "eventSequence", "eventHash"].includes(key)
+      )
+    )
+  );
+}
+
+function hardenedBinding(value) {
+  return value?.outboundBindingVersion === 2;
+}
+
+function conversationLeaseDescriptor(providerNamespace, type, value) {
+  return { providerNamespace, type, value };
+}
+
+function conversationLeaseOwner({ runId, turnId, routing }) {
+  return {
+    runId,
+    turnId,
+    workspaceId: routing?.workspaceId ?? null,
+    coordinatorId: routing?.coordinatorId ?? null,
+    workUnitId: routing?.workUnitId ?? null,
+    agentId: routing?.agentId ?? null,
+  };
+}
+
+function sameValue(left, right) {
+  return stable(left) === stable(right);
+}
+
+function observationCanCoalesce(current, data, at) {
+  if (
+    !current ||
+    data.coalesce !== true ||
+    !data.resources ||
+    typeof data.resources !== "object"
+  ) {
+    return false;
+  }
+  const merged = mergeResources(current.resources, data.resources, at);
+  return Object.keys(data.resources).every((key) => {
+    const before = current.resources[key];
+    const after = merged[key];
+    if (typeof before?.observedAt !== "string") return false;
+    const beforeTime = Date.parse(before.observedAt);
+    const afterTime = Date.parse(after.observedAt);
+    if (
+      Number.isNaN(beforeTime) ||
+      Number.isNaN(afterTime) ||
+      afterTime < beforeTime ||
+      afterTime - beforeTime > LIMITS_V1.ledger.resourceObservationCoalesceMs
+    ) {
+      return false;
+    }
+    const { observedAt: _beforeObservedAt, ...beforeSemantic } = before;
+    const { observedAt: _afterObservedAt, ...afterSemantic } = after;
+    return sameValue(beforeSemantic, afterSemantic);
+  });
 }
 
 function validateRunId(runId) {
@@ -300,120 +386,6 @@ export async function loadRun({ stateDir, runId, repair = false }) {
   return derived;
 }
 
-async function acquireRecoveryLock(recoveryLockPath) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try {
-      const handle = await open(recoveryLockPath, "wx", 0o600);
-      const metadata = JSON.stringify({
-        pid: process.pid,
-        token: randomUUID(),
-        createdAt: new Date().toISOString(),
-      });
-      try {
-        await handle.writeFile(metadata);
-        await handle.sync();
-        return handle;
-      } catch (error) {
-        await handle.close();
-        await rm(recoveryLockPath, { force: true });
-        throw error;
-      }
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  fail(
-    "LOCK_RECOVERY_BUSY",
-    "Lock recovery is busy or requires explicit repair after a recovery-writer crash.",
-  );
-}
-
-async function withRecoveryLock(paths, operation) {
-  const recovery = await acquireRecoveryLock(paths.recoveryLock);
-  try {
-    return await operation();
-  } finally {
-    await recovery.close();
-    await rm(paths.recoveryLock, { force: true });
-  }
-}
-
-async function removeOwnedLock(paths, expectedMetadata) {
-  return withRecoveryLock(paths, async () => {
-    const current = await readFile(paths.lock, "utf8").catch((error) => {
-      if (error.code === "ENOENT") return null;
-      throw error;
-    });
-    if (current === expectedMetadata) {
-      await rm(paths.lock);
-      return true;
-    }
-    return false;
-  });
-}
-
-async function acquireLock(paths) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try {
-      const handle = await open(paths.lock, "wx", 0o600);
-      const metadata = JSON.stringify({
-        pid: process.pid,
-        token: randomUUID(),
-        createdAt: new Date().toISOString(),
-      });
-      try {
-        await handle.writeFile(metadata);
-        await handle.sync();
-        return { handle, metadata };
-      } catch (error) {
-        await handle.close();
-        await removeOwnedLock(paths, metadata);
-        throw error;
-      }
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      const reclaimed = await withRecoveryLock(paths, async () => {
-        const first = await readFile(paths.lock, "utf8").catch((readError) => {
-          if (readError.code === "ENOENT") return null;
-          throw readError;
-        });
-        if (!first) return true;
-        let metadata = null;
-        try {
-          metadata = JSON.parse(first);
-        } catch {
-          metadata = null;
-        }
-        if (!Number.isInteger(metadata?.pid) || typeof metadata?.token !== "string") {
-          return false;
-        }
-        let alive = true;
-        try {
-          process.kill(metadata.pid, 0);
-        } catch (checkError) {
-          alive = checkError.code !== "ESRCH";
-        }
-        if (alive) return false;
-        const second = await readFile(paths.lock, "utf8").catch((readError) => {
-          if (readError.code === "ENOENT") return null;
-          throw readError;
-        });
-        if (second === first) {
-          await rm(paths.lock);
-          return true;
-        }
-        return false;
-      });
-      if (reclaimed) {
-        continue;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  fail("RUN_LOCKED", "Another writer holds the run state lock.");
-}
-
 function assertTerminalResponseBinding(current, data) {
   if (
     typeof data.turnId !== "string" ||
@@ -586,6 +558,34 @@ function reduce(current, event, data, at) {
   if (event === "prepared" && !path.isAbsolute(data.sourceRoot ?? "")) {
     fail("SOURCE_ROOT_INVALID", "prepared requires an absolute sourceRoot.");
   }
+  if (event === "prepared" && !validParent(data.parent)) {
+    fail(
+      "PARENT_RUN_INVALID",
+      "A continuation parent must bind a run ID, positive event sequence, and event hash.",
+    );
+  }
+  if (
+    event === "prepared" &&
+    (
+      data.outboundBindingVersion !== undefined ||
+      data.taskEnvelopeSha256 !== undefined ||
+      data.transportManifestSha256 !== undefined
+    ) &&
+    (
+      data.outboundBindingVersion !== 2 ||
+      !SHA256.test(data.taskEnvelopeSha256 ?? "") ||
+      (
+        data.transportManifestSha256 !== undefined &&
+        data.transportManifestSha256 !== null &&
+        !SHA256.test(data.transportManifestSha256)
+      )
+    )
+  ) {
+    fail(
+      "OUTBOUND_BINDING_INVALID",
+      "Hardened prepared runs require binding version 2 and an exact task-envelope digest.",
+    );
+  }
   if (event === "prepared" && (data.routing !== undefined || data.requiredGates !== undefined)) {
     if (
       !validRoutingBase(data.routing) ||
@@ -616,6 +616,49 @@ function reduce(current, event, data, at) {
       fail(
         "SEND_RESERVATION_INVALID",
         "send_reserved requires turnId, marker, expectedTerminalMarker, payloadSha256, and conversationIdentity.",
+      );
+    }
+    if (hardenedBinding(current)) {
+      if (
+        data.outboundBindingVersion !== 2 ||
+        data.contextSha256 !== current.contextSha256 ||
+        data.payloadSha256 !== current.contextSha256 ||
+        !SHA256.test(data.taskEnvelopeSha256 ?? "") ||
+        !ROUTING_ID.test(data.providerNamespace ?? "") ||
+        (
+          data.transportManifestSha256 !== undefined &&
+          data.transportManifestSha256 !== null &&
+          !SHA256.test(data.transportManifestSha256)
+        )
+      ) {
+        fail(
+          "SEND_OUTBOUND_BINDING_INVALID",
+          "Hardened reservations must bind context, task envelope, provider namespace, and optional transport manifest.",
+        );
+      }
+      if (
+        currentPhase === "prepared" &&
+        data.taskEnvelopeSha256 !== current.taskEnvelopeSha256
+      ) {
+        fail(
+          "SEND_TASK_ENVELOPE_MISMATCH",
+          "The first outbound task envelope must match the prepared task digest.",
+        );
+      }
+      if (
+        currentPhase === "prepared" &&
+        (data.transportManifestSha256 ?? null) !==
+          (current.transportManifestSha256 ?? null)
+      ) {
+        fail(
+          "SEND_TRANSPORT_MANIFEST_MISMATCH",
+          "The first outbound transport manifest must match the prepared digest.",
+        );
+      }
+    } else if (data.outboundBindingVersion !== undefined) {
+      fail(
+        "OUTBOUND_BINDING_VERSION_MISMATCH",
+        "A legacy run cannot be upgraded after prepared.",
       );
     }
     if (current?.outboundMarkers?.includes(data.marker)) {
@@ -663,9 +706,14 @@ function reduce(current, event, data, at) {
       fail("SEND_CONFIRMATION_INVALID", "send_confirmed turnId must match the reservation.");
     }
     if (
-      current?.routing &&
+      (current?.routing || hardenedBinding(current?.outbound)) &&
       (
-        !routingMatches(current.outbound?.routing, data.routing, { includeAgent: true }) ||
+        (
+          current?.routing &&
+          !routingMatches(current.outbound?.routing, data.routing, {
+            includeAgent: true,
+          })
+        ) ||
         data.marker !== current.outbound.marker ||
         data.conversationIdentity !== current.outbound.conversationIdentity ||
         !ROUTING_ID.test(data.transportKind ?? "") ||
@@ -687,6 +735,21 @@ function reduce(current, event, data, at) {
         "send_confirmed must bind the reserved route, marker, conversation, transport, locator, and observation provenance.",
       );
     }
+    if (
+      hardenedBinding(current?.outbound) &&
+      (
+        data.providerNamespace !== current.outbound.providerNamespace ||
+        !data.locator ||
+        !ROUTING_ID.test(data.locator.type ?? "") ||
+        typeof data.locator.value !== "string" ||
+        data.locator.value.length === 0
+      )
+    ) {
+      fail(
+        "SEND_CONFIRMATION_EVIDENCE_INVALID",
+        "Hardened confirmation must repeat the provider namespace and canonical locator.",
+      );
+    }
     collaboration.conversationUrl = data.conversationUrl ?? collaboration.conversationUrl;
     collaboration.outboundTurnId = data.turnId;
   }
@@ -699,6 +762,12 @@ function reduce(current, event, data, at) {
       responseSha256: data.responseSha256,
       resultEnvelopeSha256: data.resultEnvelopeSha256,
       conversationIdentity: data.conversationIdentity,
+      ...(hardenedBinding(current?.outbound)
+        ? {
+            captureReceiptPath: data.captureReceiptPath,
+            captureReceiptSha256: data.captureReceiptSha256,
+          }
+        : {}),
     };
   }
   const outbound =
@@ -708,6 +777,17 @@ function reduce(current, event, data, at) {
           marker: data.marker,
           expectedTerminalMarker: data.expectedTerminalMarker,
           payloadSha256: data.payloadSha256,
+          contextSha256: hardenedBinding(current) ? data.contextSha256 : data.payloadSha256,
+          taskEnvelopeSha256: hardenedBinding(current)
+            ? data.taskEnvelopeSha256
+            : null,
+          transportManifestSha256: hardenedBinding(current)
+            ? data.transportManifestSha256 ?? null
+            : null,
+          outboundBindingVersion: hardenedBinding(current) ? 2 : 1,
+          providerNamespace: hardenedBinding(current)
+            ? data.providerNamespace
+            : null,
           conversationIdentity: data.conversationIdentity,
           routing: current?.routing
             ? { ...current.routing, agentId: data.routing.agentId }
@@ -719,11 +799,15 @@ function reduce(current, event, data, at) {
         ? {
             ...current.outbound,
             confirmed: true,
-            confirmationEvidence: current?.routing
+            confirmationEvidence:
+              current?.routing || hardenedBinding(current.outbound)
               ? {
                   marker: data.marker,
                   conversationIdentity: data.conversationIdentity,
                   transportKind: data.transportKind,
+                  providerNamespace: hardenedBinding(current.outbound)
+                    ? data.providerNamespace
+                    : null,
                   observedAt: data.observedAt,
                   confirmationEvidenceClass: data.confirmationEvidenceClass,
                   providerMessageFingerprint: data.providerMessageFingerprint,
@@ -770,6 +854,30 @@ function reduce(current, event, data, at) {
     }
     verifications[data.verification.gateId] = data.verification;
   }
+  const conversationLeases =
+    event === "send_reserved" && hardenedBinding(current)
+      ? [
+          ...(current?.conversationLeases ?? []),
+          conversationLeaseDescriptor(
+            data.providerNamespace,
+            "conversation-identity",
+            data.conversationIdentity,
+          ),
+        ].filter((descriptor, index, values) =>
+          values.findIndex((candidate) => sameValue(candidate, descriptor)) === index
+        )
+      : event === "send_confirmed" && hardenedBinding(current?.outbound)
+        ? [
+            ...(current.conversationLeases ?? []),
+            conversationLeaseDescriptor(
+              data.providerNamespace,
+              data.locator.type,
+              data.locator.value,
+            ),
+          ].filter((descriptor, index, values) =>
+            values.findIndex((candidate) => sameValue(candidate, descriptor)) === index
+          )
+        : current?.conversationLeases ?? [];
   return {
     phase,
     collaboration,
@@ -780,9 +888,17 @@ function reduce(current, event, data, at) {
     suspended,
     sourceRoot: current?.sourceRoot ?? data.sourceRoot ?? null,
     contextSha256: current?.contextSha256 ?? data.contextSha256 ?? null,
+    outboundBindingVersion:
+      current?.outboundBindingVersion ?? data.outboundBindingVersion ?? 1,
+    taskEnvelopeSha256:
+      current?.taskEnvelopeSha256 ?? data.taskEnvelopeSha256 ?? null,
+    transportManifestSha256:
+      current?.transportManifestSha256 ?? data.transportManifestSha256 ?? null,
+    parent: current?.parent ?? data.parent ?? null,
     routing: current?.routing ?? data.routing ?? null,
     requiredGates: current?.requiredGates ?? data.requiredGates ?? [],
     verifications,
+    conversationLeases,
     verificationSetSha256:
       event === "accepted"
         ? data.verificationSetSha256 ?? current?.verificationSetSha256 ?? null
@@ -803,6 +919,7 @@ export async function recordEvent({
   idempotencyKey = null,
   clock = () => new Date().toISOString(),
   crashAfterEvent = false,
+  maxEventsPerRun = LIMITS_V1.ledger.maxEventsPerRun,
 }) {
   if (!event || typeof event !== "string") fail("EVENT_INVALID", "A non-empty event is required.");
   if (Buffer.byteLength(stable(data)) > LIMITS_V1.ledger.maxEventDataBytes) {
@@ -825,17 +942,65 @@ export async function recordEvent({
   if (!Number.isInteger(expectedSequence) || expectedSequence < 0) {
     fail("EXPECTED_SEQUENCE_REQUIRED", "expectedSequence must be a non-negative integer.");
   }
+  if (!Number.isInteger(maxEventsPerRun) || maxEventsPerRun <= 0) {
+    fail("RUN_EVENT_LIMIT_INVALID", "maxEventsPerRun must be a positive integer.");
+  }
+  const effectiveEventLimit = Math.min(
+    maxEventsPerRun,
+    LIMITS_V1.ledger.maxEventsPerRun,
+  );
+  const completionEventReserve = Math.min(
+    LIMITS_V1.ledger.completionEventReserve,
+    Math.max(0, effectiveEventLimit - 1),
+  );
+  const continuationThreshold =
+    effectiveEventLimit - completionEventReserve;
   const paths = statePaths(stateDir, runId);
   await mkdir(paths.directory, { recursive: true, mode: 0o700 });
   await chmod(paths.directory, 0o700);
-  const lock = await acquireLock(paths);
-  try {
+  return withOwnedFileLock({
+    lockPath: paths.lock,
+    busyCode: "RUN_LOCKED",
+    busyMessage: "Another writer holds the run state lock.",
+  }, async () => {
     let current;
     try {
       current = await loadRun({ stateDir, runId, repair: true });
     } catch (error) {
       if (error.code !== "RUN_NOT_FOUND") throw error;
       current = null;
+    }
+    if (event === "prepared" && !validParent(data.parent)) {
+      fail(
+        "PARENT_RUN_INVALID",
+        "A continuation parent must bind a run ID, positive event sequence, and event hash.",
+      );
+    }
+    if (event === "prepared" && data.parent != null) {
+      if (data.parent.runId === runId) {
+        fail("PARENT_RUN_INVALID", "A run cannot continue from itself.");
+      }
+      let parent;
+      try {
+        parent = await loadRun({
+          stateDir,
+          runId: data.parent.runId,
+        });
+      } catch {
+        fail(
+          "PARENT_RUN_MISMATCH",
+          "Continuation parent does not exist or cannot be verified.",
+        );
+      }
+      if (
+        parent.eventCount !== data.parent.eventSequence ||
+        parent.lastEventHash !== data.parent.eventHash
+      ) {
+        fail(
+          "PARENT_RUN_MISMATCH",
+          "Continuation parent does not match the referenced run head.",
+        );
+      }
     }
 
     if (event === "verification_recorded") {
@@ -847,6 +1012,42 @@ export async function recordEvent({
         ...data,
         verificationSetSha256: await revalidateVerificationSet(current),
       };
+    }
+    if (
+      event === "response_terminal" &&
+      hardenedBinding(current?.outbound)
+    ) {
+      if (
+        !path.isAbsolute(data.captureReceiptPath ?? "") ||
+        !SHA256.test(data.captureReceiptSha256 ?? "")
+      ) {
+        fail(
+          "TERMINAL_CAPTURE_RECEIPT_REQUIRED",
+          "Hardened terminal events require an absolute digest-bound capture receipt.",
+        );
+      }
+      const { validateTerminalCaptureReceipt } = await import(
+        "./terminal-capture.mjs"
+      );
+      await validateTerminalCaptureReceipt({
+        stateDir,
+        runId,
+        current,
+        data,
+      });
+    }
+    if (
+      ["review_started", "accepted"].includes(event) &&
+      hardenedBinding(current?.outbound)
+    ) {
+      const { revalidateActiveTerminalCapture } = await import(
+        "./terminal-capture.mjs"
+      );
+      await revalidateActiveTerminalCapture({
+        stateDir,
+        runId,
+        current,
+      });
     }
 
     if (current && idempotencyKey) {
@@ -874,6 +1075,43 @@ export async function recordEvent({
         );
       }
     }
+    const eventCount = current?.eventCount ?? 0;
+    if (
+      eventCount >= effectiveEventLimit ||
+      (
+        eventCount >= continuationThreshold &&
+        !COMPLETION_EVENTS.has(event)
+      )
+    ) {
+      fail(
+        "RUN_EVENT_LIMIT",
+        `Run reached its continuation threshold; start a digest-bound continuation before the ${effectiveEventLimit}-event hard limit.`,
+      );
+    }
+    const at = clock();
+    if (
+      event === "resource_observation" &&
+      data.coalesce === true &&
+      idempotencyKey !== null
+    ) {
+      fail(
+        "COALESCE_IDEMPOTENCY_CONFLICT",
+        "Coalescible resource observations cannot carry idempotency keys.",
+      );
+    }
+    if (
+      event === "resource_observation" &&
+      current?.phase === expectedState &&
+      expectedSequence <= current.eventCount &&
+      current.eventCount - expectedSequence <= 1 &&
+      observationCanCoalesce(current, data, at)
+    ) {
+      return {
+        state: current,
+        idempotent: false,
+        coalesced: true,
+      };
+    }
     if (
       (current?.eventCount ?? 0) !== expectedSequence ||
       (current?.phase ?? null) !== expectedState
@@ -883,8 +1121,39 @@ export async function recordEvent({
         actualState: current?.phase ?? null,
       });
     }
-    const at = clock();
     const reduced = reduce(current, event, data, at);
+    if (
+      ["send_reserved", "send_confirmed"].includes(event) &&
+      hardenedBinding(
+        event === "send_reserved" ? current : current?.outbound
+      )
+    ) {
+      const owner = conversationLeaseOwner({
+        runId,
+        turnId: reduced.outbound.turnId,
+        routing: reduced.outbound.routing,
+      });
+      for (const descriptor of reduced.conversationLeases) {
+        await claimConversationLease({
+          stateDir,
+          descriptor,
+          owner,
+          at,
+          isOwnerTerminal: async (observedOwner) => {
+            try {
+              return TERMINAL.has(
+                (await loadRun({
+                  stateDir,
+                  runId: observedOwner.runId,
+                })).phase,
+              );
+            } catch {
+              return false;
+            }
+          },
+        });
+      }
+    }
     const idempotencyKeys = [
       ...(current?.idempotencyKeys ?? []),
       ...(idempotencyKey ? [idempotencyKey] : []),
@@ -893,7 +1162,7 @@ export async function recordEvent({
       ...(current?.outboundIdempotencyKeys ?? []),
       ...(OUTBOUND_EVENTS.has(event) ? [idempotencyKey] : []),
     ];
-    const idempotencyRecords = {
+    const allIdempotencyRecords = {
       ...(current?.idempotencyRecords ?? {}),
       ...(idempotencyKey
         ? {
@@ -905,6 +1174,15 @@ export async function recordEvent({
           }
         : {}),
     };
+    const retainedRecordKeys = new Set([
+      ...idempotencyKeys,
+      ...outboundIdempotencyKeys,
+    ]);
+    const idempotencyRecords = Object.fromEntries(
+      Object.entries(allIdempotencyRecords).filter(([key]) =>
+        retainedRecordKeys.has(key)
+      ),
+    );
     const outboundMarkers = [
       ...(current?.outboundMarkers ?? []),
       ...(event === "send_reserved" ? [data.marker] : []),
@@ -947,9 +1225,18 @@ export async function recordEvent({
     if (crashAfterEvent) fail("SIMULATED_CRASH", "Simulated crash after durable event append.");
     const next = { ...snapshot, lastEventHash: hash };
     await atomicStateWrite(paths.state, next);
-    return { state: next, idempotent: false };
-  } finally {
-    await lock.handle.close();
-    await removeOwnedLock(paths, lock.metadata);
-  }
+    if (TERMINAL.has(next.phase) && next.conversationLeases.length > 0) {
+      await releaseConversationLeases({
+        stateDir,
+        descriptors: next.conversationLeases,
+        owner: conversationLeaseOwner({
+          runId,
+          turnId: next.outbound?.turnId,
+          routing: next.outbound?.routing,
+        }),
+        at,
+      });
+    }
+    return { state: next, idempotent: false, coalesced: false };
+  });
 }

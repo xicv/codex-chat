@@ -582,6 +582,15 @@ function assertRunBinding(run, plan, runId) {
   if (plan.contextSha256 !== run.contextSha256) {
     fail("DELIVERY_CONTEXT_MISMATCH", "Delivery context does not match the active run.");
   }
+  if (
+    run.outbound.outboundBindingVersion === 2 &&
+    plan.providerNamespace !== run.outbound.providerNamespace
+  ) {
+    fail(
+      "DELIVERY_PROVIDER_MISMATCH",
+      "Delivery provider namespace does not match the hardened outbound.",
+    );
+  }
   if (plan.conversationIdentity !== run.outbound.conversationIdentity) {
     fail(
       "DELIVERY_CONVERSATION_MISMATCH",

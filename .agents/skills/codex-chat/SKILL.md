@@ -85,10 +85,12 @@ evidence. Read
 [coordination-v2.md](references/coordination-v2.md) before using more than one
 agent or coordinator.
 
-Create the run with the artifact SHA-256, then reserve the one outbound turn.
-For a coordinated run, `prepared` includes immutable `routing`
-(`workspaceId`, `coordinatorId`, `workUnitId`) plus `requiredGates`;
-`send_reserved` repeats that route and adds one `agentId`:
+Create the run with the context artifact SHA-256 and the SHA-256 of the exact
+English task envelope that will be sent, then reserve the one outbound turn.
+New runs use `outboundBindingVersion: 2`. For a coordinated run, `prepared`
+also includes immutable `routing` (`workspaceId`, `coordinatorId`,
+`workUnitId`) plus `requiredGates`; `send_reserved` repeats the context and task
+digests, provider namespace, route, and adds one `agentId`:
 
 ```bash
 node <skill>/scripts/codex-chat.mjs record \
@@ -103,7 +105,19 @@ Use the English task structure in [task-template.md](references/task-template.md
 
 Prefer the Codex in-app browser using the user's existing authenticated session. Capability-probe the browser before depending on it. A native persisted-chat bridge may observe and reconcile a pending or confirmed turn when available. It may send a new outbound turn only after the prior turn is terminal, conclusively failed, or explicitly resolved by the user. Do not use cookies, private endpoints, browser-profile inspection, paid API fallback, or credit purchase.
 
-Before sending, choose a unique visible outbound marker and record `send_reserved` with expected sequence/state, a permanent idempotency key, turn ID, payload SHA-256, outbound marker, expected terminal marker, conversation identity, and any active route. Idempotency keys and outbound markers are bound to their exact operation and cannot be reused for different data. Reconcile the outbound marker first. Send only when the marker is conclusively absent; an unknown observation becomes `send_ambiguous`. After the UI accepts the outbound turn, record `send_confirmed`. A coordinated confirmation repeats the full route, marker, conversation identity, transport, locator, observation time, evidence class, and provider-message fingerprint when observable. Do not route by conversation title or model label.
+Before sending, choose a unique visible outbound marker and record
+`send_reserved` with expected sequence/state, a permanent idempotency key, turn
+ID, context SHA-256, exact task-envelope SHA-256, outbound marker, expected
+terminal marker, provider namespace, conversation identity, and any active
+route. The helper takes a local lease on that provider conversation. Reconcile
+the outbound marker first. Send only when the marker is conclusively absent; an
+unknown observation becomes `send_ambiguous`. After the UI accepts the outbound
+turn, record `send_confirmed`. A coordinated confirmation repeats the full
+route, marker, conversation identity, provider namespace, transport, canonical
+locator, observation time, evidence class, and provider-message fingerprint
+when observable; confirmation leases that locator too. Idempotency keys and
+outbound markers are bound to their exact operation and cannot be reused for
+different data. Do not route by conversation title or model label.
 
 Once `send_confirmed` is durable:
 
@@ -113,7 +127,14 @@ Once `send_confirmed` is durable:
 - On ambiguous send completion, record `send_ambiguous`; do not guess.
 - Save conversation links and terminal markers.
 
-Record transport and allowance observations with their source, observation time, and expiry when known. If both sides are limited, record `suspended_both_limited` with exact resume metadata. If Codex takes over locally, record `local_takeover`; independence is then permanently degraded for that run.
+Record transport and allowance observations with their source, observation
+time, and expiry when known. Noncritical equivalent observations may set
+`coalesce: true`; repeats within five seconds do not grow the ledger. Use
+`recovery-plan` when a persistent adapter needs a deterministic read-only
+reconciliation contract. If both sides are limited, record
+`suspended_both_limited` with exact resume metadata. If Codex takes over
+locally, record `local_takeover`; independence is then permanently degraded for
+that run.
 
 If the observed UI label changes or no longer matches the user-requested collaborator class, do not silently downgrade. Record the observation and either use an explicitly allowed alternative, take over locally with degraded independence, or suspend.
 
@@ -123,7 +144,22 @@ Pause only for authentication, a genuinely material product choice, or an unreco
 
 After a terminal response:
 
-1. Extract the exact `COLLAB_RESULT_V1` JSON bytes between the response boundary markers and save them unchanged with one final LF. Hash both the full terminal response and those exact envelope bytes. Record `response_terminal` with the active turn ID, expected terminal marker, `responseSha256`, `resultEnvelopeSha256`, and matching conversation identity; a coordinated run also requires the full route and a terminal, non-truncated capture binding. Then record `review_started`.
+1. Save the complete terminal response unchanged, then extract the exact
+   `COLLAB_RESULT_V1` JSON bytes between the response boundary markers and save
+   them unchanged with one final LF. Run `terminal-capture --capture <full>
+   --result <json>` to verify, secret-scan, and publish create-once response,
+   envelope, receipt, and slot evidence. Record `response_terminal` using the
+   returned `eventData`; do not hand-author hash claims. Then record
+   `review_started`. The helper revalidates the stored evidence at review,
+   import, and acceptance.
+
+   ```bash
+   node <skill>/scripts/codex-chat.mjs terminal-capture \
+     --state-dir /private/tmp/codex-chat-runs \
+     --run-id <run-id> \
+     --capture /private/tmp/codex-chat-terminal-response.txt \
+     --result /private/tmp/codex-chat-result.json
+   ```
 2. Validate that exact saved JSON file with `import`; do not reconstruct it or hand-apply an untrusted patch to the working tree. `import` rejects bytes that do not match the durable terminal envelope digest. An advisory result is quarantined, scanned, and receipted without source mutation.
 3. For a patch result, apply only to an explicit scratch copy. `import` scans the quarantined result, serializes by canonical scratch target, creates a write-ahead receipt, and performs a final no-follow inode/preimage comparison before target replacement. The MVP accepts one existing UTF-8/LF regular file, exact preimage SHA-256, and zero-fuzz unified diff hunks. It rejects creation, deletion, rename, mode, binary, multi-file, stale, symlinked, raced, and out-of-scope changes.
 4. Review the postimage independently. Never accept the collaborator's test claims as evidence.

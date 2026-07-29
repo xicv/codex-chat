@@ -12,6 +12,10 @@ export const LIMITS_V1 = Object.freeze({
     maxHunks: 64,
     maxPostimageBytes: 256 * 1024,
   }),
+  terminalCapture: Object.freeze({
+    maxCaptureBytes: 2 * 1024 * 1024,
+    maxReceiptBytes: 32 * 1024,
+  }),
   scanner: Object.freeze({
     maxProcessMs: 5_000,
     maxOutputBytes: 128 * 1024,
@@ -26,8 +30,11 @@ export const LIMITS_V1 = Object.freeze({
   }),
   ledger: Object.freeze({
     maxEventDataBytes: 64 * 1024,
+    maxEventsPerRun: 1024,
+    completionEventReserve: 32,
     maxIdempotencyKeyBytes: 256,
     retainedIdempotencyKeys: 128,
+    resourceObservationCoalesceMs: 5_000,
   }),
 });
 

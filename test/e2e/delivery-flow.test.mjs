@@ -13,6 +13,7 @@ test("local CLI E2E binds a derived representation receipt to one confirmed rout
   const artifacts = await tempDir("codex-chat-delivery-artifacts-");
   const runId = "delivery-e2e";
   const contextSha256 = sha256("portable context bytes");
+  const taskEnvelopeSha256 = sha256("delivery e2e task envelope");
   const source = "Full engineering context.\n";
   const derived = "Engineering context excerpt.\n";
   await writeFixture(root, "source.txt", source);
@@ -104,6 +105,8 @@ test("local CLI E2E binds a derived representation receipt to one confirmed rout
 
   await record("prepared", 0, null, {
     contextSha256,
+    taskEnvelopeSha256,
+    outboundBindingVersion: 2,
     sourceRoot: root,
     routing: {
       workspaceId: routing.workspaceId,
@@ -117,6 +120,10 @@ test("local CLI E2E binds a derived representation receipt to one confirmed rout
     marker: "DELIVERY_E2E_MARKER",
     expectedTerminalMarker: "DELIVERY_E2E_TERMINAL",
     payloadSha256: contextSha256,
+    contextSha256,
+    taskEnvelopeSha256,
+    outboundBindingVersion: 2,
+    providerNamespace: "chatgpt",
     conversationIdentity: "chatgpt:delivery-e2e",
     routing,
   });
@@ -127,6 +134,7 @@ test("local CLI E2E binds a derived representation receipt to one confirmed rout
     conversationIdentity: "chatgpt:delivery-e2e",
     conversationUrl: "chatgpt://delivery-e2e",
     routing,
+    providerNamespace: "chatgpt",
     transportKind: "native-chat",
     observedAt: "2026-07-29T08:10:00.000Z",
     confirmationEvidenceClass: "host-accepted",
@@ -174,6 +182,28 @@ test("local CLI E2E binds a derived representation receipt to one confirmed rout
         declaredDetail: "low",
       },
     })}\n`,
+  );
+  const crossedProviderPlan = JSON.parse(
+    await readFile(deliveryPlanPath, "utf8"),
+  );
+  crossedProviderPlan.providerNamespace = "different-provider";
+  const crossedProviderPlanPath = await writeFixture(
+    artifacts,
+    "delivery-plan-crossed-provider.json",
+    `${JSON.stringify(crossedProviderPlan)}\n`,
+  );
+  const crossedProvider = await runCli([
+    "delivery-receipt",
+    "--state-dir", stateDir,
+    "--run-id", runId,
+    "--manifest", manifestPath,
+    "--plan", crossedProviderPlanPath,
+    "--evidence", evidencePath,
+  ]);
+  assert.equal(crossedProvider.code, 2);
+  assert.equal(
+    crossedProvider.json.error.code,
+    "DELIVERY_PROVIDER_MISMATCH",
   );
 
   const receipt = await runCli([

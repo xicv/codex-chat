@@ -62,6 +62,17 @@ test("normative JSON schemas are valid and expose the v1 required fields", async
       "kind", "protocolVersion", "cwd", "sourceRoot", "scratchRoot",
       "argv", "timeoutMs", "evidenceClass",
     ],
+    "terminal-capture-receipt-v1.schema.json": [
+      "kind", "protocolVersion", "slotId", "bindings", "capture",
+      "resultEnvelope", "receiptId",
+    ],
+    "transport-recovery-plan-v1.schema.json": [
+      "kind", "protocolVersion", "runHead", "routing", "mode", "sendAllowed",
+      "resendAllowed", "markerReconciliationRequired",
+      "conclusiveMarkerAbsenceMayReturnToController", "observationsAllowed",
+      "outbound", "conversationLeases", "allowedLedgerEvents",
+      "forbiddenTransportActions", "nextAction",
+    ],
   };
   for (const [name, required] of Object.entries(expectations)) {
     const schema = JSON.parse(await readFile(path.join(schemaDir, name), "utf8"));
@@ -90,6 +101,12 @@ test("versioned implementation limits agree with normative schemas", async () =>
       "utf8",
     ),
   );
+  const terminalCaptureSchema = JSON.parse(
+    await readFile(
+      path.join(schemaDir, "terminal-capture-receipt-v1.schema.json"),
+      "utf8",
+    ),
+  );
   assert.equal(contextSchema.properties.files.maxItems, LIMITS_V1.pack.maxFiles);
   assert.equal(
     verifySchema.properties.timeoutMs.maximum,
@@ -114,6 +131,13 @@ test("versioned implementation limits agree with normative schemas", async () =>
     deliveryPlanSchema.$defs.nullableProviderId.oneOf[1].maxLength,
     LIMITS_V2.delivery.maxProviderIdBytes,
   );
+  assert.equal(
+    terminalCaptureSchema.properties.capture.properties.bytes.maximum,
+    LIMITS_V1.terminalCapture.maxCaptureBytes,
+  );
+  assert.equal(LIMITS_V1.ledger.maxEventsPerRun, 1024);
+  assert.equal(LIMITS_V1.ledger.completionEventReserve, 32);
+  assert.equal(LIMITS_V1.ledger.resourceObservationCoalesceMs, 5_000);
 });
 
 test("loadRun fails closed for unsupported state versions", async () => {
@@ -157,9 +181,11 @@ test("CLI exposes machine-readable help and version without repository context",
       "pack",
       "manifest",
       "delivery-receipt",
+      "terminal-capture",
       "record",
       "status",
       "resume",
+      "recovery-plan",
       "import",
       "verify",
     ],

@@ -35,6 +35,7 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
   ]);
   assert.equal(packed.code, 0, packed.stderr);
   const contextSha256 = packed.json.data.sha256;
+  const taskEnvelopeSha256 = sha256("synthetic outbound task\n");
 
   async function record(event, sequence, expectedState, data = {}) {
     const dataPath = path.join(stateDir, `${sequence}-${event}.json`);
@@ -51,6 +52,8 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
 
   await record("prepared", 0, null, {
     contextSha256,
+    taskEnvelopeSha256,
+    outboundBindingVersion: 2,
     sourceRoot: root,
     routing,
     requiredGates: ["synthetic-e2e"],
@@ -60,6 +63,10 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
     marker: "VISIBLE_E2E_MARKER",
     expectedTerminalMarker: "CODEX_CHAT_RESULT_COMPLETE",
     payloadSha256: contextSha256,
+    contextSha256,
+    taskEnvelopeSha256,
+    outboundBindingVersion: 2,
+    providerNamespace: "chatgpt",
     conversationIdentity: "synthetic-conversation",
     routing: outboundRouting,
   });
@@ -69,6 +76,7 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
     conversationIdentity: "synthetic-conversation",
     conversationUrl: "https://chatgpt.com/c/synthetic",
     routing: outboundRouting,
+    providerNamespace: "chatgpt",
     transportKind: "synthetic-transport",
     observedAt: "2026-07-29T00:00:00.000Z",
     confirmationEvidenceClass: "synthetic-thread-observation",
@@ -79,6 +87,17 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
     error: "Transport closed",
   });
   assert.equal(disconnected.nextAction, "observe-and-reconcile-do-not-resend");
+  const recovery = await runCli([
+    "recovery-plan", "--state-dir", stateDir, "--run-id", runId,
+  ]);
+  assert.equal(recovery.code, 0, JSON.stringify(recovery.json));
+  assert.equal(recovery.json.data.mode, "read-only");
+  assert.equal(recovery.json.data.sendAllowed, false);
+  assert.equal(recovery.json.data.resendAllowed, false);
+  assert.equal(
+    recovery.json.data.outbound.locator.value,
+    "synthetic-conversation",
+  );
   const patch = [
     "--- a/src/answer.mjs",
     "+++ b/src/answer.mjs",
@@ -101,22 +120,30 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
     claims: { testsRun: [] },
   };
   const resultRaw = `${JSON.stringify(resultEnvelope)}\n`;
-  await record("response_terminal", 4, "response_pending_unknown", {
-    turnId: "turn-1",
-    terminalMarker: "CODEX_CHAT_RESULT_COMPLETE",
-    responseSha256: "f".repeat(64),
-    resultEnvelopeSha256: sha256(resultRaw),
-    conversationIdentity: "synthetic-conversation",
-    routing: outboundRouting,
-    captureState: "terminal",
-    truncated: false,
-    captureSha256: sha256(resultRaw),
-    providerMessageFingerprint: sha256("synthetic-provider-message"),
-  });
-  await record("review_started", 5, "response_terminal");
-
   const resultPath = path.join(stateDir, "result.json");
   await writeFile(resultPath, resultRaw);
+  const capturePath = path.join(stateDir, "terminal-capture.txt");
+  await writeFile(capturePath, [
+    "Synthetic collaborator response.",
+    "CODEX_CHAT_RESULT_BEGIN",
+    JSON.stringify(resultEnvelope),
+    "CODEX_CHAT_RESULT_END",
+    "CODEX_CHAT_RESULT_COMPLETE",
+    "",
+  ].join("\n"));
+  const captured = await runCli([
+    "terminal-capture", "--state-dir", stateDir, "--run-id", runId,
+    "--capture", capturePath, "--result", resultPath,
+  ]);
+  assert.equal(captured.code, 0, JSON.stringify(captured.json));
+  await record(
+    "response_terminal",
+    4,
+    "response_pending_unknown",
+    captured.json.data.eventData,
+  );
+  await record("review_started", 5, "response_terminal");
+
   const imported = await runCli([
     "import", "--state-dir", stateDir, "--run-id", runId,
     "--result", resultPath, "--scratch", scratch, "--include", "src/answer.mjs",
@@ -215,4 +242,6 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
   assert.equal(status.json.data.state.phase, "accepted");
   assert.equal(status.json.data.resendAllowed, false);
   assert.equal(status.json.data.nextAction, "complete");
+  assert.equal(status.json.data.recoveryPlan.mode, "terminal");
+  assert.equal(status.json.data.recoveryPlan.sendAllowed, false);
 });

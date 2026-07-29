@@ -70,16 +70,20 @@ user's existing authenticated session.
 3. **Minimum necessary context.** Files are selected explicitly. VCS internals,
    credentials, environment files, databases, runtime state, browser state,
    caches, and build output are denied.
-4. **Scan the exact egress artifact.** The serialized context sent to the
+4. **Scan and bind the exact egress.** The serialized context sent to the
    collaborator is identity-checked with `gitleaks`, measured, and bound to a
-   SHA-256 digest. Parent gitleaks configuration is removed; inline allow
-   directives and ambient ignore files are disabled in an isolated scan policy.
+   SHA-256 digest. The exact task envelope has its own digest, so context bytes
+   cannot be confused with the actual outbound instruction. Parent gitleaks
+   configuration is removed; inline allow directives and ambient ignore files
+   are disabled in an isolated scan policy.
 5. **At-most-once automatic submission.** A durable visible marker and
    idempotency record are created before sending. Ambiguity never authorizes a
    blind retry.
 6. **Bind the exact response.** Both the complete terminal response and the
-   extracted result envelope are hashed. Import rejects different bytes even
-   when run, turn, and context identifiers match.
+   extracted result envelope are scanned and stored as create-once,
+   content-addressed evidence. Review, import, and acceptance revalidate the
+   receipt and reject changed bytes even when run, turn, and context identifiers
+   match.
 7. **Treat returned code as hostile.** Results are quarantined and scanned.
    The MVP accepts either an advisory or a zero-fuzz patch for one existing
    UTF-8/LF file with an exact preimage digest.
@@ -93,7 +97,9 @@ user's existing authenticated session.
     workflow.
 11. **Route by immutable identity.** Multi-agent work binds workspace,
     coordinator, run, work unit, agent, conversation, and turn. Titles and
-    visible model labels are never routing keys.
+    visible model labels are never routing keys. A shared local registry leases
+    both logical conversation identity and confirmed provider locator so active
+    coordinators cannot interleave one conversation.
 12. **Separate source from representations.** Exact bytes, excerpts, OCR, page
     renders, summaries, formulas, displayed values, and crops have separate
     digests and provenance. Model visibility remains unknown until transport
@@ -119,9 +125,11 @@ evidence. Provider acceptance still leaves `modelVisible: "unknown"`.
 
 Concurrent work is isolated by immutable workspace, coordinator, run, work
 unit, agent, conversation, and turn identities. Each run has its own
-compare-and-swap ledger; direct messages use route-specific mailboxes;
-broadcasts are evidence-only; and overlapping writers serialize behind
-target-specific locks. See
+compare-and-swap ledger; hardened turns lease the provider conversation across
+all runs in one state directory; and overlapping writers serialize behind
+target-specific locks. Direct mailboxes, broadcast receipts, coordinator
+epochs, and fencing remain distributed-extension contracts rather than claims
+about the local CLI. See
 [`coordination-v2.md`](.agents/skills/codex-chat/references/coordination-v2.md)
 for the complete local contract and the remaining distributed-fencing work.
 
@@ -221,11 +229,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 73/73 |
+| Unit tests | 80/80 |
 | Contract tests | 27/27 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 2/2 |
-| Aggregate test gate | 107/107 |
+| Aggregate test gate | 114/114 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -266,6 +274,16 @@ node .agents/skills/codex-chat/scripts/codex-chat.mjs delivery-receipt \
   --manifest /private/tmp/codex-chat-manifest.json \
   --plan /private/tmp/codex-chat-delivery-plan.json \
   --evidence /private/tmp/codex-chat-provider-evidence.bin
+
+node .agents/skills/codex-chat/scripts/codex-chat.mjs terminal-capture \
+  --state-dir /private/tmp/codex-chat-runs \
+  --run-id <run-id> \
+  --capture /private/tmp/codex-chat-terminal-response.txt \
+  --result /private/tmp/codex-chat-result.json
+
+node .agents/skills/codex-chat/scripts/codex-chat.mjs recovery-plan \
+  --state-dir /private/tmp/codex-chat-runs \
+  --run-id <run-id>
 ```
 
 Context outputs must be new paths in existing real directories. Delivery
@@ -278,9 +296,11 @@ directory. The CLI never replaces an existing artifact.
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
 | `manifest` | Create and scan a typed `COLLAB_CONTEXT_MANIFEST_V2` provenance sidecar |
 | `delivery-receipt` | Create and scan immutable, digest-bound transport evidence without claiming model visibility |
+| `terminal-capture` | Verify, scan, and publish create-once full-response and result evidence |
 | `record` | Append a typed transition to the hash-chained run ledger |
 | `status` | Derive the current run state and safe next action |
 | `resume` | Recover state without authorizing an unsafe resend |
+| `recovery-plan` | Emit a deterministic read-only transport reconciliation contract |
 | `import` | Bind, quarantine, scan, and optionally apply one result to scratch |
 | `verify` | Execute a digest-pinned verification plan without a shell |
 
@@ -306,6 +326,13 @@ model label, agentic allowance, upload capability, and API budget separately.
 - A delivery receipt binds one representation and attachment ordinal to a
   confirmed routed turn, its exact ledger head, and scanned raw observation
   evidence. It proves neither upload automation nor model visibility.
+- A terminal capture receipt binds the exact task, full response, extracted
+  result, route, conversation, turn, provider fingerprint, and terminal marker.
+- Equivalent noncritical resource observations may coalesce within five
+  seconds. General idempotency snapshots retain 128 records, outbound records
+  remain permanent, and a run history segment is capped at 1,024 events before
+  an exact-head-bound continuation; the final 32 slots are reserved for safe
+  completion.
 - Paid API fallback and automatic credit purchase are disabled by policy.
 
 ## Development
@@ -367,9 +394,11 @@ Security assumptions and exclusions are documented in
   observed transport acceptance or rejection. Attachment upload, delta
   reconstruction, and proof of backend model visibility are not implemented;
   `modelVisible` remains `unknown`.
-- Coordinated local runs reject crossed routes and serialize import targets,
-  but distributed coordinator epochs, fenced leases, and partitioned mailboxes
-  remain v2 work.
+- Coordinated local runs reject crossed routes, lease provider conversations,
+  and serialize import targets when every coordinator shares one canonical
+  state directory. Multi-host coordinator epochs, externally fenced leases,
+  durable partitioned mailboxes, backpressure, and cancellation remain
+  distributed-extension work.
 - Hosted, production, deployment, and physical-device verification are outside
   the local E2E evidence class.
 

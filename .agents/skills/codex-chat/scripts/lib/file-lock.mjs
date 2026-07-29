@@ -3,11 +3,21 @@ import { mkdir, open, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fail } from "./errors.mjs";
 
-const ATTEMPTS = 200;
-const RETRY_MS = 10;
+const LOCK_WAIT_MS = 5_000;
+const MIN_RETRY_MS = 5;
+const MAX_RETRY_MS = 50;
+
+function retryDelay(attempt) {
+  return Math.min(MAX_RETRY_MS, MIN_RETRY_MS * (2 ** Math.min(attempt, 4)));
+}
+
+async function waitForRetry(attempt) {
+  await new Promise((resolve) => setTimeout(resolve, retryDelay(attempt)));
+}
 
 async function acquireRecoveryLock(recoveryLockPath) {
-  for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
+  const deadline = performance.now() + LOCK_WAIT_MS;
+  for (let attempt = 0; performance.now() < deadline; attempt += 1) {
     try {
       const handle = await open(recoveryLockPath, "wx", 0o600);
       const metadata = JSON.stringify({
@@ -26,7 +36,7 @@ async function acquireRecoveryLock(recoveryLockPath) {
       }
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
-      await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+      await waitForRetry(attempt);
     }
   }
   fail(
@@ -79,7 +89,8 @@ function lockOwnerIsProvenDead(contents) {
 
 async function acquireLock({ lockPath, recoveryLockPath, busyCode, busyMessage }) {
   await mkdir(path.dirname(lockPath), { recursive: true, mode: 0o700 });
-  for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
+  const deadline = performance.now() + LOCK_WAIT_MS;
+  for (let attempt = 0; performance.now() < deadline; attempt += 1) {
     try {
       const handle = await open(lockPath, "wx", 0o600);
       const metadata = JSON.stringify({
@@ -104,7 +115,7 @@ async function acquireLock({ lockPath, recoveryLockPath, busyCode, busyMessage }
       });
       if (observed === null) continue;
       if (!lockOwnerIsProvenDead(observed)) {
-        await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+        await waitForRetry(attempt);
         continue;
       }
       let reclaimed = false;
@@ -128,7 +139,7 @@ async function acquireLock({ lockPath, recoveryLockPath, busyCode, busyMessage }
         if (recoveryError.code !== "LOCK_RECOVERY_BUSY") throw recoveryError;
       }
       if (reclaimed) continue;
-      await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+      await waitForRetry(attempt);
     }
   }
   fail(busyCode, busyMessage);

@@ -9,6 +9,8 @@ Protocol v1 uses the constants exported by `scripts/lib/limits.mjs`.
 | Aggregate selected bytes | 524,288 |
 | Serialized context artifact | 786,432 |
 | Result envelope bytes | 262,144 |
+| Full terminal capture bytes | 2,097,152 |
+| Serialized terminal capture receipt | 32,768 |
 | Unified diff bytes | 131,072 |
 | Unified diff lines | 4,096 |
 | Unified diff hunks | 64 |
@@ -21,9 +23,17 @@ Protocol v1 uses the constants exported by `scripts/lib/limits.mjs`.
 | Verification timeout | 600,000 ms |
 | Captured stdout plus stderr | 1,048,576 bytes |
 | Ledger event data | 65,536 bytes |
+| Events per run history segment | 1,024 |
+| Reserved terminal-completion events | 32 |
 | Idempotency key | 256 bytes |
 
-The ledger retains the 128 most recent general idempotency keys. Outbound reservation and confirmation keys are retained for the full run.
+The ledger retains the 128 most recent general idempotency keys and matching
+records. Outbound reservation and confirmation keys and records are retained
+for the full run. Equivalent resource observations may opt into a fixed
+5,000 ms coalescing window. The last 32 event slots are reserved for terminal
+capture, review, declared verification gates, acceptance, or blocking. Longer
+histories start a new run whose `parent` binds the prior run ID, exact sequence,
+and event hash.
 
 Changing a limit is a protocol/contract change and requires corresponding tests and schema updates.
 

@@ -4,7 +4,8 @@ The isolation key is:
 
 ```text
 (workspaceId, coordinatorId, runId, workUnitId, agentId,
- conversationIdentity, turnId, attemptId, artifactId)
+ providerNamespace, conversationIdentity, conversationLocator,
+ turnId, attemptId, artifactId)
 ```
 
 Never route by a conversation title, visible model label, file name, or “latest”
@@ -13,16 +14,39 @@ message. Those values are descriptive, not identities.
 ## Current coordinated-run contract
 
 A coordinated run may declare `routing` and `requiredGates` in `prepared`.
-`send_reserved` adds exactly one `agentId`. `send_confirmed` must repeat the
-whole route, outbound marker, conversation identity, transport, locator,
-observation time, and provider-message fingerprint when one is observable.
-`response_terminal` must repeat the route and describe a terminal,
-non-truncated capture. A mismatch is rejected rather than attached to the
-nearest active run.
+New runs should also set `outboundBindingVersion: 2` and bind the exact task
+envelope separately from the context artifact. `send_reserved` adds exactly one
+`agentId`, repeats those digests, and names the provider namespace.
+`send_confirmed` must repeat the whole route, outbound marker, conversation
+identity, provider namespace, transport, canonical locator, observation time,
+and provider-message fingerprint when one is observable.
+`response_terminal` must cite the create-once terminal capture receipt. A
+mismatch is rejected rather than attached to the nearest active run.
 
 Every writer still supplies expected event sequence and phase. The hash-chained
 ledger is one compare-and-swap stream per run. Outbound idempotency keys and
 visible markers are permanent for that run.
+
+All coordinators for one local workspace must use the same canonical
+`stateDir`. Hardened reservations acquire a lease for:
+
+```text
+(providerNamespace, conversationIdentity)
+```
+
+Confirmation acquires a second lease for:
+
+```text
+(providerNamespace, locator.type, locator.value)
+```
+
+The registry is shared across runs and coordinators in that state directory.
+Two logical identities therefore cannot quietly attach to the same confirmed
+provider conversation, and two coordinators cannot interleave turns in one
+active conversation. Runs using different provider conversations keep
+independent run locks and may progress concurrently. A terminal owner releases
+its leases; a claimant may replace a stale active record only after the
+owner's durable run is proven terminal.
 
 Attachment delivery uses a narrower immutable slot:
 
@@ -42,12 +66,19 @@ fail closed instead of attaching to whichever conversation is active.
 gates must bind the same run, turn, context, route, application key, and
 postimage. `accepted` re-hashes those receipts before it can become terminal.
 
+The file locks wait up to five seconds with bounded exponential backoff and
+reclaim only a lock whose PID is proven dead. They improve local overload
+tolerance but remain single-host primitives. Using different state directories,
+a network filesystem with unsuitable create/rename semantics, or several hosts
+bypasses the guarantee.
+
 This is an opt-in v1-compatible path. Legacy v1 runs remain readable but do not
 gain evidence that was never recorded.
 
-## Direct messages and broadcasts
+## Direct messages and broadcasts (distributed extension)
 
-Mutation commands are direct:
+The current CLI has no persistent mailbox service. A future multi-host adapter
+should make mutation commands direct:
 
 ```text
 mailbox = (workspaceId, coordinatorId, runId, workUnitId, agentId)
@@ -58,7 +89,7 @@ ID, route tuple, payload digest, and expected stream head. A response with a
 different tuple or causal parent is a `crossed_response`; it is quarantined and
 cannot advance state.
 
-Broadcasts are evidence-only by default:
+Broadcasts should be evidence-only by default:
 
 ```text
 topic = (workspaceId, runId, workUnitId, type, source)
@@ -87,7 +118,7 @@ writers therefore produce one winner; the loser sees a stale preimage.
 Merging is its own single-writer work unit with explicit parent artifacts. Do
 not let several coordinators merge into one mutable checkout independently.
 
-## Coordinator failover and future fencing
+## Coordinator failover and distributed fencing
 
 A distributed v2 coordinator needs an epoch lease:
 
@@ -101,9 +132,12 @@ tokens even if the old coordinator resumes after a pause. Expiry alone is not
 enough: the new coordinator first reconciles the run ledger and any pending
 external send. Confirmed or ambiguous sends remain observe-only after failover.
 
-The current local lock safely reclaims a proven-dead PID but does not yet
-provide distributed fencing or PID-reuse diagnostics. Do not represent it as a
-multi-host lease.
+The current local lock and provider-conversation lease do not provide
+distributed fencing, quorum, clock-independent expiry, or PID-reuse
+diagnostics. Do not represent them as multi-host leases. Durable mailboxes,
+backpressure, cancellation, and coordinator epochs should live behind a
+separate adapter; they should not be approximated by several processes sharing
+browser titles or "latest message" state.
 
 ## Backpressure and cancellation
 
@@ -113,6 +147,10 @@ event addressed to one route and causal message. It is cooperative: it stops
 new side effects but cannot erase a send, file replacement, or receipt that
 already became durable.
 
-Checkpoint namespaces should include workspace, run, and work unit. Continuing
-a long run starts a new history segment whose parent is the previous terminal
-event/context digest; it never rewrites the old stream.
+Checkpoint namespaces should include workspace, run, and work unit. The local
+ledger limits each run segment to 1,024 events and reserves the final 32 for
+terminal review/verification/acceptance or blocking. General idempotency
+snapshots retain 128 records, outbound records remain permanent, and
+equivalent noncritical observations can coalesce within five seconds.
+Continuing a long run starts a new run whose `parent` binds the prior exact
+sequence and event hash. It never rewrites the old stream.

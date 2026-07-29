@@ -20,6 +20,7 @@ Background and goal
 
 Context binding
 - Context artifact SHA-256: [digest]
+- Exact task envelope SHA-256: [digest]
 - Expected terminal marker: [unique-terminal-marker]
 - Selected files: [manifest]
 - VCS baseline: [kind/ref/dirty state]
@@ -29,6 +30,7 @@ Context binding
 - Delivery receipt: [digest or none]
 - Delivery run head: [event sequence and event digest, or none]
 - Delivery evidence: [kind and digest, or none]
+- Terminal capture receipt: [digest or pending]
 - Model-visible representations: unknown in the current transport-neutral protocol
 
 Architecture and boundaries

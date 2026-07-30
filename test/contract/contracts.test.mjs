@@ -31,7 +31,7 @@ test("installed metadata mechanically disables implicit invocation", async () =>
   assert.match(metadata, /^policy:\n  allow_implicit_invocation: false\n?$/m);
 });
 
-test("skill proves browser transport before preparing any outbound source", async () => {
+test("skill proves browser and provider readiness before preparing outbound source", async () => {
   const instructions = await readFile(
     path.resolve(".agents/skills/codex-chat/SKILL.md"),
     "utf8",
@@ -57,10 +57,30 @@ test("skill proves browser transport before preparing any outbound source", asyn
   assert.match(gate, /Do not call `js_reset`/);
   assert.match(
     gate,
-    /Do not switch to another\s+`node_repl`-backed surface/,
+    /Do not\s+switch to another\s+`node_repl`-backed surface/,
   );
-  assert.match(gate, /restart(?:ing)? the ChatGPT desktop app/);
-  assert.match(gate, /no capsule was transmitted/);
+  assert.match(gate, /restart(?:ing)? the ChatGPT\s+desktop app/);
+  assert.match(gate, /no capsule was prepared or transmitted/);
+  assert.match(
+    gate,
+    /[Oo]pen or claim the intended external collaborator conversation/,
+  );
+  assert.match(
+    gate,
+    /verify that its authenticated composer\s+is ready/,
+  );
+  assert.match(
+    gate,
+    /Do not type,\s+paste, attach, upload, or send anything/,
+  );
+  assert.match(
+    gate,
+    /Only after the provider-readiness check passes may source selection/,
+  );
+  assert.match(
+    gate,
+    /If provider readiness fails[\s\S]*no capsule was prepared or transmitted/,
+  );
 });
 
 test("normative JSON schemas are valid and expose the v1 required fields", async () => {

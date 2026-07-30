@@ -20,7 +20,7 @@ Read [security.md](references/security.md) before the first outbound turn and [p
 
 ## Prove browser transport before source work
 
-Before selecting outbound files, packing, scanning, creating a run, or reserving a send, establish a zero-egress browser transport health gate:
+Before selecting outbound files, packing, scanning, creating a run, or reserving a send, establish a zero-source-egress browser and provider-readiness gate:
 
 1. Follow the installed Browser skill to expose `node_repl/js` through tool
    discovery. Run one no-I/O probe:
@@ -30,19 +30,31 @@ Before selecting outbound files, packing, scanning, creating a run, or reserving
    ```
 2. Initialize the supported browser runtime, acquire the intended browser
    binding, read its complete documentation, and perform one supported
-   read-only capability check. Do not open the external collaborator, attach a
-   file, or enter task text during this gate.
-3. Only after both layers pass may source selection and capsule preparation
-   begin.
+   read-only capability check.
+3. Open or claim the intended external collaborator conversation and use a
+   fresh read-only page observation to verify that its authenticated composer
+   is ready. Record the provider namespace, a unique logical conversation
+   identity, the observed UI label, and any stable locator that is already
+   available. Do not route by the page title or model label. Do not type,
+   paste, attach, upload, or send anything.
+4. Only after the provider-readiness check passes may source selection and
+   capsule preparation begin.
 
-If `node_repl/js` returns `Transport closed`, reacquire `node_repl/js` through
-tool discovery once and repeat only the no-I/O probe. Do not call `js_reset`;
-reset uses the same closed transport. Do not switch to another
-`node_repl`-backed surface or loop retries. If the second probe fails, stop the
-browser-dependent branch before source preparation. Report the exact error,
-that no capsule was transmitted, and that there are no external collaborator
-claims. Recommend restarting the ChatGPT desktop app after other active tasks
-finish, then start or resume a task and run this gate again.
+If `node_repl/js` returns `Transport closed` during this gate,
+reacquire `node_repl/js` through tool discovery once and repeat only the no-I/O
+probe. Do not call `js_reset`; reset uses the same closed transport. Do not
+switch to another `node_repl`-backed surface or loop retries. If the second
+probe fails, stop the browser-dependent branch before source preparation.
+Report the exact error, that no capsule was prepared or transmitted, and that
+there are no external collaborator claims. Recommend restarting the ChatGPT
+desktop app after other active tasks finish, then start or resume a task and
+run this gate again.
+
+If provider readiness fails for any other reason, stop before source
+preparation. Report the observed provider or authentication blocker,
+that no capsule was prepared or transmitted, and that there are no external
+collaborator claims. Authentication and verification challenges remain
+user-only actions.
 
 This pre-send classification applies only when no upload or send UI action was
 invoked. If the transport closes during or after any action that might have

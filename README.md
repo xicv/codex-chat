@@ -242,8 +242,9 @@ Authority:
 Codex should then:
 
 1. inspect the project and its instructions;
-2. prove the JavaScript tool transport and browser binding without source
-   egress;
+2. prove the JavaScript tool transport, browser binding, and authenticated
+   external-collaborator composer without typing, attaching, uploading, or
+   sending;
 3. select and scan only the necessary context;
 4. reserve and send one bounded external turn;
 5. monitor without duplicate submission;
@@ -372,9 +373,11 @@ automation.
 `codex-chat` tracks the controller, collaborator, transport, observed external
 model label, agentic allowance, upload capability, and API budget separately.
 
-- Browser transport is capability-probed before source selection or capsule
-  creation. A repeated pre-send `Transport closed` stops without egress;
-  `js_reset` and another `node_repl`-backed surface are not recovery paths.
+- Browser transport and the intended provider's authenticated composer are
+  capability-probed before source selection or capsule creation. A repeated
+  pre-send `Transport closed` or provider-readiness failure stops before a
+  capsule is prepared; `js_reset` and another `node_repl`-backed surface are
+  not recovery paths.
 - A slow or disconnected response remains observe-only after submission.
 - A changed reset time or refreshed page never authorizes another send.
 - A conclusively failed provider turn ends the current run.

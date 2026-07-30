@@ -1,18 +1,24 @@
 # codex-chat protocol v1
 
-## Pre-run browser transport gate
+## Pre-run browser and provider-readiness gate
 
-The controller proves the host tool transport and one read-only browser
-capability before selecting outbound source, generating or scanning a capsule,
-creating a run, or reserving a send. This zero-egress gate is outside the run
-ledger because no collaboration run exists yet.
+The controller proves the host tool transport, one read-only browser
+capability, and the intended provider page before selecting outbound source,
+generating or scanning a capsule, creating a run, or reserving a send. It
+opens or claims the intended external collaborator conversation and verifies
+an authenticated composer from a fresh read-only page observation. It records
+the provider namespace, a unique logical conversation identity, the observed
+UI label, and any stable locator already available without routing by title or
+model label. It does not type, paste, attach, upload, or send. This
+zero-source-egress gate is outside the run ledger because no collaboration run
+exists yet.
 
 If the `node_repl` tool transport returns `Transport closed`, the controller
 may rediscover the tool once and repeat one no-I/O probe. It does not call
 `js_reset`, switch to another surface that depends on the same transport, or
-loop retries. A repeated pre-send failure stops source preparation and is
-reported as host transport unavailability with no external collaborator
-claims.
+loop retries. A repeated failure, an unavailable authenticated composer, or
+another provider-readiness failure stops source preparation and is reported
+with no capsule prepared or transmitted and no external collaborator claims.
 
 Once an upload or send action might have run, this pre-run classification no
 longer applies. A closed transport then enters normal marker reconciliation:

@@ -19,6 +19,9 @@ that introduced each change; merge-only commits are omitted.
 - A zero-egress browser transport gate that runs before source packaging,
   bounds recovery from a closed `node_repl` transport, and preserves ambiguous
   send semantics.
+- A provider-readiness gate that opens or claims the intended collaborator
+  conversation and verifies an authenticated composer before selecting or
+  packaging source.
 
 ### Fixed
 
@@ -26,6 +29,8 @@ that introduced each change; merge-only commits are omitted.
   canonical while disabling only this repository's authoring copy.
 - Browser transport failures no longer spend time building and scanning a
   capsule before discovering that no browser-backed submission is possible.
+- Provider navigation, authentication, or composer failures now stop before
+  capsule preparation instead of after source has already been packaged.
 
 ## 2026-07-30
 

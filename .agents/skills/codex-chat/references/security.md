@@ -130,13 +130,21 @@ A browser UI label is an observation with source and time. Backend model identit
 
 ## Recovery
 
-Browser transport must be proven before selecting or packaging outbound source,
-creating a run, or reserving a send. A `Transport closed` result from the
-`node_repl` tool transport is not repaired by `js_reset` or by selecting
-another surface backed by that transport. Reacquire the tool once, repeat one
-no-I/O probe, then stop before egress if it remains closed. A pre-send failure
-with no upload or send action proves only that this attempt transmitted
-nothing; it is not a provider failure and creates no external claims.
+Browser transport and provider readiness must be proven before selecting or
+packaging outbound source, creating a run, or reserving a send. Open or claim
+the intended external collaborator conversation and verify its authenticated
+composer using a fresh read-only page observation. Record only bounded
+provider, logical conversation, UI-label, and stable-locator observations.
+Do not inspect cookies, profiles, passwords, session stores, or other
+credential material, and do not type, paste, attach, upload, or send.
+
+A `Transport closed` result from the `node_repl` tool transport is not repaired
+by `js_reset` or by selecting another surface backed by that transport.
+Reacquire the tool once, repeat one no-I/O probe, then stop before source
+preparation if it remains closed. An unavailable authenticated composer or
+another provider-readiness failure also stops before source preparation. A
+failure in this gate means no capsule was prepared or transmitted; it is not a
+provider-terminal failure and creates no external collaborator claims.
 
 If the transport closes during or after an action that might have submitted
 content, delivery is ambiguous. Preserve the outbound marker and reconcile it

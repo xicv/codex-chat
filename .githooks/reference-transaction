@@ -1,0 +1,29 @@
+#!/bin/sh
+
+if [ "$1" != "committed" ]; then
+  exit 0
+fi
+
+while IFS=' ' read -r _old_oid new_oid ref_name
+do
+  if [ "$ref_name" != "refs/heads/main" ]; then
+    continue
+  fi
+  case "$new_oid" in
+    ""|ref:*|0000000000000000000000000000000000000000|0000000000000000000000000000000000000000000000000000000000000000)
+      exit 0
+      ;;
+  esac
+  hook_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd -P) || exit 1
+  repo_root=$(unset CDPATH; cd -- "$hook_dir/.." && pwd -P) || exit 1
+  if ! node "$repo_root/scripts/sync-local-install.mjs" \
+    --commit "$new_oid" \
+    --quiet
+  then
+    echo "codex-chat: local skill synchronization failed after main changed" >&2
+    exit 1
+  fi
+  exit 0
+done
+
+exit 0

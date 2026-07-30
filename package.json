@@ -24,6 +24,9 @@
     "codex-chat": "./.agents/skills/codex-chat/scripts/codex-chat.mjs"
   },
   "scripts": {
+    "sync:local": "node scripts/sync-local-install.mjs",
+    "sync:local:check": "node scripts/sync-local-install.mjs --check --install-hook",
+    "sync:local:install": "node scripts/sync-local-install.mjs --install-hook",
     "test": "node --test --test-concurrency=4 test/**/*.test.mjs",
     "test:unit": "node --test --test-concurrency=1 test/unit/*.test.mjs",
     "test:contract": "node --test --test-concurrency=1 test/contract/*.test.mjs",

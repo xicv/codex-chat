@@ -167,20 +167,38 @@ git clone https://github.com/xicv/codex-chat.git
 cd codex-chat
 ```
 
-### Personal skill
+### Personal skill and CLI
 
-Synchronize the skill to the standard personal skills directory:
+From a clone on `main`, install the exact committed skill at
+`~/.codex/skills/codex-chat` and expose its CLI as
+`~/.local/bin/codex-chat`:
 
 ```bash
-mkdir -p "$HOME/.agents/skills/codex-chat"
-rsync -a --delete \
-  .agents/skills/codex-chat/ \
-  "$HOME/.agents/skills/codex-chat/"
+npm run sync:local:install
 ```
 
-The trailing slashes are intentional: they update the existing skill contents
-without creating a nested `codex-chat/codex-chat` directory. Codex detects
-skill changes automatically. If an update does not appear, restart Codex.
+This also configures repository-local Git hooks. Whenever the local `main`
+reference changes, the committed skill is synchronized automatically. A
+`pre-push` guard synchronizes once more and rejects a push to remote `main`
+unless it comes from the exact local `main` object. Dirty and untracked files
+are never copied.
+
+For a one-off synchronization without installing the hooks, run:
+
+```bash
+npm run sync:local
+```
+
+Ensure `~/.local/bin` is on `PATH`, then verify the installed bytes, executable
+modes, CLI link, and hook configuration without changing them:
+
+```bash
+npm run sync:local:check
+```
+
+Codex detects skill changes automatically. An already-open task may retain the
+skill inventory it started with; open a new task if the updated skill does not
+appear, and restart Codex only if a new task still cannot discover it.
 
 ## Quick start
 
@@ -241,11 +259,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 100/100 |
+| Unit tests | 103/103 |
 | Contract tests | 27/27 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 3/3 |
-| Aggregate test gate | 135/135 |
+| Aggregate test gate | 138/138 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -367,6 +385,7 @@ model label, agentic allowance, upload capability, and API budget separately.
 ## Development
 
 The runtime has no npm dependencies. Tests use the Node.js built-in test runner.
+See [changelog.md](changelog.md) for the Git-derived project history.
 
 ```bash
 npm run test:unit

@@ -1,0 +1,30 @@
+#!/bin/sh
+
+while IFS=' ' read -r _local_ref local_oid remote_ref _remote_oid
+do
+  if [ "$remote_ref" != "refs/heads/main" ]; then
+    continue
+  fi
+  case "$local_oid" in
+    ""|0000000000000000000000000000000000000000|0000000000000000000000000000000000000000000000000000000000000000)
+      echo "codex-chat: refusing to delete main through the managed push path" >&2
+      exit 1
+      ;;
+  esac
+  hook_dir=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd -P) || exit 1
+  repo_root=$(unset CDPATH; cd -- "$hook_dir/.." && pwd -P) || exit 1
+  main_oid=$(git rev-parse --verify refs/heads/main) || exit 1
+  if [ "$local_oid" != "$main_oid" ]; then
+    echo "codex-chat: push main only from the exact local refs/heads/main" >&2
+    exit 1
+  fi
+  if ! node "$repo_root/scripts/sync-local-install.mjs" \
+    --commit "$local_oid" \
+    --quiet
+  then
+    echo "codex-chat: refusing main push because local skill synchronization failed" >&2
+    exit 1
+  fi
+done
+
+exit 0

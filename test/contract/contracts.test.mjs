@@ -31,6 +31,38 @@ test("installed metadata mechanically disables implicit invocation", async () =>
   assert.match(metadata, /^policy:\n  allow_implicit_invocation: false\n?$/m);
 });
 
+test("skill proves browser transport before preparing any outbound source", async () => {
+  const instructions = await readFile(
+    path.resolve(".agents/skills/codex-chat/SKILL.md"),
+    "utf8",
+  );
+  const transportGate = instructions.indexOf(
+    "## Prove browser transport before source work",
+  );
+  const contextPreparation = instructions.indexOf(
+    "## Prepare deterministic context",
+  );
+  assert.notEqual(transportGate, -1);
+  assert.ok(transportGate < contextPreparation);
+  const gate = instructions.slice(transportGate, contextPreparation);
+  assert.match(
+    gate,
+    /Before selecting outbound files, packing, scanning, creating a run, or reserving a send/,
+  );
+  assert.match(gate, /nodeRepl\.write\("CODEX_CHAT_TRANSPORT_OK"\)/);
+  assert.match(
+    gate,
+    /reacquire `node_repl\/js` through\s+tool discovery once/,
+  );
+  assert.match(gate, /Do not call `js_reset`/);
+  assert.match(
+    gate,
+    /Do not switch to another\s+`node_repl`-backed surface/,
+  );
+  assert.match(gate, /restart(?:ing)? the ChatGPT desktop app/);
+  assert.match(gate, /no capsule was transmitted/);
+});
+
 test("normative JSON schemas are valid and expose the v1 required fields", async () => {
   const expectations = {
     "collab-context-v1.schema.json": ["kind", "protocolVersion", "rootLabel", "files"],

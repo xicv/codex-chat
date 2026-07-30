@@ -18,9 +18,42 @@ This skill is explicit-only because it can send selected source outside the loca
 
 Read [security.md](references/security.md) before the first outbound turn and [protocol.md](references/protocol.md) before creating a run.
 
+## Prove browser transport before source work
+
+Before selecting outbound files, packing, scanning, creating a run, or reserving a send, establish a zero-egress browser transport health gate:
+
+1. Follow the installed Browser skill to expose `node_repl/js` through tool
+   discovery. Run one no-I/O probe:
+
+   ```js
+   nodeRepl.write("CODEX_CHAT_TRANSPORT_OK")
+   ```
+2. Initialize the supported browser runtime, acquire the intended browser
+   binding, read its complete documentation, and perform one supported
+   read-only capability check. Do not open the external collaborator, attach a
+   file, or enter task text during this gate.
+3. Only after both layers pass may source selection and capsule preparation
+   begin.
+
+If `node_repl/js` returns `Transport closed`, reacquire `node_repl/js` through
+tool discovery once and repeat only the no-I/O probe. Do not call `js_reset`;
+reset uses the same closed transport. Do not switch to another
+`node_repl`-backed surface or loop retries. If the second probe fails, stop the
+browser-dependent branch before source preparation. Report the exact error,
+that no capsule was transmitted, and that there are no external collaborator
+claims. Recommend restarting the ChatGPT desktop app after other active tasks
+finish, then start or resume a task and run this gate again.
+
+This pre-send classification applies only when no upload or send UI action was
+invoked. If the transport closes during or after any action that might have
+submitted content, apply the ambiguity rules below, preserve the visible
+marker, and never infer non-delivery from the closed transport.
+
 ## Prepare deterministic context
 
-Use the bundled helper at `scripts/codex-chat.mjs`. It is a local safety and evidence tool; it never controls the browser or sends messages.
+After the browser transport gate passes, use the bundled helper at
+`scripts/codex-chat.mjs`. It is a local safety and evidence tool; it never
+controls the browser or sends messages.
 
 For the portable v1 capsule, select explicit UTF-8/LF source files only. Do
 not pass whole directories.

@@ -1,5 +1,23 @@
 # codex-chat protocol v1
 
+## Pre-run browser transport gate
+
+The controller proves the host tool transport and one read-only browser
+capability before selecting outbound source, generating or scanning a capsule,
+creating a run, or reserving a send. This zero-egress gate is outside the run
+ledger because no collaboration run exists yet.
+
+If the `node_repl` tool transport returns `Transport closed`, the controller
+may rediscover the tool once and repeat one no-I/O probe. It does not call
+`js_reset`, switch to another surface that depends on the same transport, or
+loop retries. A repeated pre-send failure stops source preparation and is
+reported as host transport unavailability with no external collaborator
+claims.
+
+Once an upload or send action might have run, this pre-run classification no
+longer applies. A closed transport then enters normal marker reconciliation:
+unknown delivery becomes `send_ambiguous`, and no resend is authorized.
+
 ## Durable event ledger
 
 `events.jsonl` is authoritative. `state.json` is a rebuildable cache. Each event has a monotonically increasing sequence, previous hash, typed payload, resulting snapshot, and SHA-256 over canonical JSON excluding its own hash. The ledger is written and fsynced before atomically replacing state.

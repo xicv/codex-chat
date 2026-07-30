@@ -16,6 +16,16 @@ that introduced each change; merge-only commits are omitted.
 - Read-only installation parity checks and regression coverage for drift
   repair, non-`main` rejection, unsafe targets, CLI conflicts, hook-driven
   commits and fast-forward pulls, and pre-push synchronization.
+- A zero-egress browser transport gate that runs before source packaging,
+  bounds recovery from a closed `node_repl` transport, and preserves ambiguous
+  send semantics.
+
+### Fixed
+
+- Duplicate skill selector guidance now keeps the personal installation
+  canonical while disabling only this repository's authoring copy.
+- Browser transport failures no longer spend time building and scanning a
+  capsule before discovering that no browser-backed submission is possible.
 
 ## 2026-07-30
 

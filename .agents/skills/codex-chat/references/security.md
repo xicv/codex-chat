@@ -130,6 +130,19 @@ A browser UI label is an observation with source and time. Backend model identit
 
 ## Recovery
 
+Browser transport must be proven before selecting or packaging outbound source,
+creating a run, or reserving a send. A `Transport closed` result from the
+`node_repl` tool transport is not repaired by `js_reset` or by selecting
+another surface backed by that transport. Reacquire the tool once, repeat one
+no-I/O probe, then stop before egress if it remains closed. A pre-send failure
+with no upload or send action proves only that this attempt transmitted
+nothing; it is not a provider failure and creates no external claims.
+
+If the transport closes during or after an action that might have submitted
+content, delivery is ambiguous. Preserve the outbound marker and reconcile it
+after transport recovery; never reinterpret the same error as proof of
+non-delivery.
+
 After `send_confirmed`, absence of evidence is not evidence of failed delivery. Disconnect, timeout, idle, missing output, stale UI, and changed allowance reset time never permit resend.
 
 `recovery-plan` exposes identifiers and allowed observation events to a

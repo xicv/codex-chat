@@ -200,6 +200,22 @@ Codex detects skill changes automatically. An already-open task may retain the
 skill inventory it started with; open a new task if the updated skill does not
 appear, and restart Codex only if a new task still cannot discover it.
 
+Codex keeps repository and personal skill scopes separate. When this authoring
+repository and the personal installation are both visible, two `codex-chat`
+entries can appear because equal skill names are not merged. Keep the
+auto-updated personal installation as the canonical entry and disable only the
+repository-scoped authoring copy in `~/.codex/config.toml`:
+
+```toml
+[[skills.config]]
+path = "/absolute/path/to/codex-chat/.agents/skills/codex-chat/SKILL.md"
+enabled = false
+```
+
+Restart the ChatGPT desktop app after changing this setting. The repository
+source remains checked in, and the Git hooks continue synchronizing its
+committed `main` bytes to the personal installation.
+
 ## Quick start
 
 Open a Codex task and invoke the skill explicitly:
@@ -226,13 +242,15 @@ Authority:
 Codex should then:
 
 1. inspect the project and its instructions;
-2. select and scan only the necessary context;
-3. reserve and send one bounded external turn;
-4. monitor without duplicate submission;
-5. import and review the exact returned result;
-6. run local acceptance gates;
-7. send precise correction evidence when necessary; and
-8. report what is local, committed, pushed, published, or deployed as separate
+2. prove the JavaScript tool transport and browser binding without source
+   egress;
+3. select and scan only the necessary context;
+4. reserve and send one bounded external turn;
+5. monitor without duplicate submission;
+6. import and review the exact returned result;
+7. run local acceptance gates;
+8. send precise correction evidence when necessary; and
+9. report what is local, committed, pushed, published, or deployed as separate
    states.
 
 ## Real-world example: building `codex-chat` with `codex-chat`
@@ -260,10 +278,10 @@ Current local evidence:
 | Gate | Result |
 | --- | ---: |
 | Unit tests | 103/103 |
-| Contract tests | 27/27 |
+| Contract tests | 28/28 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 3/3 |
-| Aggregate test gate | 138/138 |
+| Aggregate test gate | 139/139 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -354,6 +372,9 @@ automation.
 `codex-chat` tracks the controller, collaborator, transport, observed external
 model label, agentic allowance, upload capability, and API budget separately.
 
+- Browser transport is capability-probed before source selection or capsule
+  creation. A repeated pre-send `Transport closed` stops without egress;
+  `js_reset` and another `node_repl`-backed surface are not recovery paths.
 - A slow or disconnected response remains observe-only after submission.
 - A changed reset time or refreshed page never authorizes another send.
 - A conclusively failed provider turn ends the current run.

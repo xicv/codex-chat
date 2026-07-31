@@ -106,6 +106,27 @@ test("skill proves browser and provider readiness before preparing outbound sour
   );
 });
 
+test("a bounded external-response wait degrades independence without changing delivery state", async () => {
+  const instructions = await readFile(
+    path.resolve(".agents/skills/codex-chat/SKILL.md"),
+    "utf8",
+  );
+
+  assert.match(instructions, /external-response observation budget/);
+  assert.match(
+    instructions,
+    /record\s+`local_takeover`[\s\S]*response\s+remains pending and observe-only/,
+  );
+  assert.match(
+    instructions,
+    /Do not cancel the provider generation, click Stop, resend, switch transports,\s+close the bound task space, or record a terminal response/,
+  );
+  assert.match(
+    instructions,
+    /[Cc]ontinue local work[\s\S]*opportunistically observe the original\s+turn/,
+  );
+});
+
 test("Ego fallback is one-shot, read-only, user-authenticated, and route-bound", async () => {
   const fallback = await readFile(
     path.resolve(
@@ -214,6 +235,35 @@ test("Ego submission classifies stale drafts and preserves at-most-once reconcil
   assert.match(
     submit,
     /`\/c\/WEB:`[\s\S]*provisional[\s\S]*stable canonical conversation locator/,
+  );
+});
+
+test("Ego canonicalizes multiline ProseMirror drafts without innerText paragraph inflation", async () => {
+  const fallback = await readFile(
+    path.resolve(
+      ".agents/skills/codex-chat/references/ego-browser.md",
+    ),
+    "utf8",
+  );
+  const submitStart = fallback.indexOf("## Submit one bound turn");
+  const cleanupStart = fallback.indexOf("## Finish the task space");
+  assert.notEqual(submitStart, -1);
+  assert.ok(submitStart < cleanupStart);
+  const submit = fallback.slice(submitStart, cleanupStart);
+
+  assert.match(submit, /Do not use\s+`innerText`/);
+  assert.match(submit, /direct children are all `<p>` elements/);
+  assert.match(submit, /child\.textContent \?\? ""/);
+  assert.match(submit, /\.join\("\\n"\)/);
+  assert.match(submit, /preserves empty paragraph elements/);
+  assert.match(submit, /await import\("node:fs\/promises"\)/);
+  assert.match(
+    submit,
+    /Do not use CommonJS `require`[\s\S]*top-level `await`/,
+  );
+  assert.match(
+    submit,
+    /unsupported composer DOM[\s\S]*stop without clearing, typing, or\s+sending/,
   );
 });
 
@@ -399,7 +449,15 @@ test("versioned implementation limits agree with normative schemas", async () =>
   assert.deepEqual(
     distributedEventSchema.properties.request.allOf[1]
       .not.properties.operation.enum,
-    ["run.read", "mail.inspect", "mail.list"],
+    ["run.read", "mail.peek", "mail.inspect", "mail.list"],
+  );
+  assert.deepEqual(
+    terminalCaptureSchema.properties.resultValidation.required,
+    ["status", "errorCode"],
+  );
+  assert.equal(
+    terminalCaptureSchema.properties.resultValidation.properties.status.const,
+    "rejected",
   );
 });
 

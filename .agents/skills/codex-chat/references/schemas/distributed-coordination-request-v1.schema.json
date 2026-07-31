@@ -16,6 +16,7 @@
         "conversation.claim",
         "conversation.release",
         "mail.enqueue",
+        "mail.peek",
         "mail.claim",
         "mail.ack",
         "mail.cancel",
@@ -35,7 +36,7 @@
       "if": {
         "properties": {
           "operation": {
-            "enum": ["run.read", "mail.inspect", "mail.list"]
+            "enum": ["run.read", "mail.peek", "mail.inspect", "mail.list"]
           }
         }
       },

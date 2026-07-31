@@ -157,13 +157,41 @@ Use separate bounded heredocs for compose, submit, and observe. Each heredoc
 must take the already-persisted marker and task envelope as inputs and must use
 the same bound numeric task-space ID.
 
+Read an envelope file with an ESM-safe dynamic import:
+
+```js
+const { readFile } = await import("node:fs/promises")
+const taskEnvelope = await readFile(taskEnvelopePath, "utf8")
+```
+
+Do not use CommonJS `require` in an Ego script that also uses top-level `await`;
+Node rejects that ambiguous module format before any browser action.
+
 In the compose heredoc:
 
 1. Reconcile the durable marker read-only against submitted user turns before
    touching the composer.
-2. Read and normalize the current composer text to classify any stale draft.
-   Never use `fillInput` for ChatGPT's `contenteditable`: it appends to the
-   existing ProseMirror content instead of reliably replacing it.
+2. Canonicalize the composer text to classify any stale draft. Do not use
+   `innerText`: ProseMirror may expose one visual paragraph break as two newline
+   characters, so an exact multiline envelope can appear different even when
+   its content is unchanged. When the direct children are all `<p>` elements,
+   reconstruct the canonical value exactly as:
+
+   ```js
+   const children = [...composer.children]
+   const composerText = children
+     .map((child) => child.textContent ?? "")
+     .join("\n")
+   ```
+
+   Joining every direct paragraph, including an empty final paragraph,
+   preserves empty paragraph elements and therefore leading, repeated, and
+   trailing envelope newlines. Do not trim, Unicode-normalize, collapse
+   whitespace, or replace non-breaking spaces. If the composer has text but
+   its direct children are absent or include any non-`<p>` element, classify
+   it as unsupported composer DOM and stop without clearing, typing, or
+   sending. Never use `fillInput` for ChatGPT's `contenteditable`: it appends
+   to the existing ProseMirror content instead of reliably replacing it.
 3. If the normalized composer is empty, focus it and type the reserved envelope.
    Only call `typeText(taskEnvelope)` when the normalized composer is empty.
 4. If the normalized composer exactly equals the expected task envelope, reuse

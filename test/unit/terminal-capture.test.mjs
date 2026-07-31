@@ -201,6 +201,65 @@ test("terminal capture receipts bind immutable response and result bytes", async
   );
 });
 
+test("invalid terminal envelopes are durably rejected into correction-only state", async () => {
+  const stateDir = await tempDir();
+  const sourceRoot = await tempDir();
+  const fixtureRoot = await tempDir();
+  const run = await createHardenedRun(stateDir, sourceRoot);
+  const invalidResult = {
+    kind: "COLLAB_RESULT_V1",
+    protocolVersion: 1,
+    runId: run.runId,
+    turnId: "turn-capture",
+    contextSha256: run.contextSha256,
+    artifactKind: "advisory",
+    claims: { findings: [] },
+  };
+  const resultRaw = `${JSON.stringify(invalidResult)}\n`;
+  const captureRaw = [
+    "CODEX_CHAT_RESULT_BEGIN",
+    JSON.stringify(invalidResult),
+    "CODEX_CHAT_RESULT_END",
+    "TERMINAL_CAPTURE_COMPLETE",
+    "",
+  ].join("\n");
+  const receipt = await createTerminalCaptureReceipt({
+    stateDir,
+    runId: run.runId,
+    capturePath: await writeFixture(fixtureRoot, "capture.txt", captureRaw),
+    resultPath: await writeFixture(fixtureRoot, "result.json", resultRaw),
+    resultMode: "rejected",
+    scanner: "skip",
+    testMode: true,
+  });
+
+  assert.equal(receipt.eventData.resultStatus, "rejected");
+  assert.equal(receipt.eventData.rejectionCode, "RESULT_SCHEMA_INVALID");
+  const rejected = await recordEvent({
+    stateDir,
+    runId: run.runId,
+    event: "response_rejected",
+    data: receipt.eventData,
+    expectedSequence: 3,
+    expectedState: "send_confirmed",
+  });
+  assert.equal(rejected.state.phase, "needs_revision");
+  assert.equal(
+    rejected.state.collaboration.responseBinding.resultStatus,
+    "rejected",
+  );
+  await assert.rejects(
+    recordEvent({
+      stateDir,
+      runId: run.runId,
+      event: "review_started",
+      expectedSequence: 4,
+      expectedState: "needs_revision",
+    }),
+    (error) => error.code === "INVALID_TRANSITION",
+  );
+});
+
 test("hardened terminal events reject claims without receipts and detect object tampering", async () => {
   const stateDir = await tempDir();
   const sourceRoot = await tempDir();

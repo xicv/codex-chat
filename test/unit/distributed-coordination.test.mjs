@@ -505,6 +505,190 @@ test("partitioned mailboxes enforce backpressure, claim ownership, and redeliver
   await plane.close();
 });
 
+test("empty mailbox peeks consume no mutation or idempotency capacity", async () => {
+  const stateDir = await tempDir("codex-chat-control-mailbox-peek-empty-");
+  const plane = await openCoordinationControlPlane({
+    stateDir,
+    clock: () => Date.parse("2026-07-30T03:15:00.000Z"),
+    randomId: deterministicIds("lease-mailbox-peek-empty"),
+  });
+  const lease = (await plane.execute({
+    operation: "lease.acquire",
+    idempotencyKey: "mailbox-peek-empty-acquire",
+    data: {
+      workspaceId: "workspace-mailbox-peek-empty",
+      runId: "run-mailbox-peek-empty",
+      ownerId: "coordinator-mailbox-peek-empty",
+      ttlMs: 60_000,
+    },
+  })).result;
+  const route = {
+    workspaceId: "workspace-mailbox-peek-empty",
+    coordinatorId: "coordinator-mailbox-peek-empty",
+    runId: "run-mailbox-peek-empty",
+    workUnitId: "work-unit-mailbox-peek-empty",
+    agentId: "agent-mailbox-peek-empty",
+  };
+
+  for (let index = 0; index < 100_000; index += 1) {
+    const peek = await plane.execute({
+      operation: "mail.peek",
+      data: { ...lease, route },
+    });
+    assert.equal(peek.sequence, 1);
+    assert.equal(peek.idempotent, false);
+    assert.deepEqual(peek.result, {
+      route,
+      candidate: null,
+    });
+  }
+  await plane.close();
+
+  const events = (await readFile(path.join(stateDir, "events.jsonl"), "utf8"))
+    .trim()
+    .split("\n");
+  assert.equal(events.length, 1);
+  const snapshot = JSON.parse(
+    await readFile(path.join(stateDir, "state.json"), "utf8"),
+  );
+  assert.equal(snapshot.sequence, 1);
+  assert.deepEqual(Object.keys(snapshot.idempotencyRecords), [
+    "mailbox-peek-empty-acquire",
+  ]);
+});
+
+test("mail claims can bind the exact peeked candidate across races and redelivery", async () => {
+  const stateDir = await tempDir("codex-chat-control-mailbox-peek-claim-");
+  let nowMs = Date.parse("2026-07-30T03:20:00.000Z");
+  const plane = await openCoordinationControlPlane({
+    stateDir,
+    clock: () => nowMs,
+    randomId: deterministicIds(
+      "lease-mailbox-peek-claim",
+      "claim-mailbox-race-winner",
+      "claim-mailbox-redelivery",
+    ),
+    limits: {
+      mailbox: {
+        maxInFlight: 1,
+      },
+    },
+  });
+  const lease = (await plane.execute({
+    operation: "lease.acquire",
+    idempotencyKey: "mailbox-peek-claim-acquire",
+    data: {
+      workspaceId: "workspace-mailbox-peek-claim",
+      runId: "run-mailbox-peek-claim",
+      ownerId: "coordinator-mailbox-peek-claim",
+      ttlMs: 60_000,
+    },
+  })).result;
+  const head = (await plane.execute({
+    operation: "run.append",
+    idempotencyKey: "mailbox-peek-claim-head",
+    data: {
+      ...lease,
+      eventId: "mailbox-peek-claim-prepared",
+      eventType: "prepared",
+      payloadSha256: "7".repeat(64),
+      expectedSequence: 0,
+      expectedHash: null,
+      terminal: false,
+    },
+  })).result;
+  const route = {
+    workspaceId: "workspace-mailbox-peek-claim",
+    coordinatorId: "coordinator-mailbox-peek-claim",
+    runId: "run-mailbox-peek-claim",
+    workUnitId: "work-unit-mailbox-peek-claim",
+    agentId: "agent-mailbox-peek-claim",
+  };
+  const payload = { task: "peek-then-claim" };
+  await plane.execute({
+    operation: "mail.enqueue",
+    idempotencyKey: "mailbox-peek-claim-enqueue",
+    data: {
+      ...lease,
+      route,
+      messageId: "message-mailbox-peek-claim",
+      correlationId: "correlation-mailbox-peek-claim",
+      causalParentId: null,
+      senderId: "coordinator-mailbox-peek-claim",
+      payload,
+      payloadSha256: sha256(JSON.stringify(payload)),
+      expectedRunHead: {
+        eventSequence: head.eventSequence,
+        eventHash: head.eventHash,
+      },
+    },
+  });
+  const peeked = await plane.execute({
+    operation: "mail.peek",
+    data: { ...lease, route },
+  });
+  assert.deepEqual(peeked.result.candidate, {
+    messageId: "message-mailbox-peek-claim",
+    deliveryAttempt: 0,
+  });
+
+  await plane.execute({
+    operation: "mail.claim",
+    idempotencyKey: "mailbox-peek-claim-race-winner",
+    data: {
+      ...lease,
+      route,
+      consumerId: "agent-process-race-winner",
+      visibilityTimeoutMs: 1_000,
+    },
+  });
+  await assert.rejects(
+    plane.execute({
+      operation: "mail.claim",
+      idempotencyKey: "mailbox-peek-claim-race-loser",
+      data: {
+        ...lease,
+        route,
+        consumerId: "agent-process-race-loser",
+        visibilityTimeoutMs: 1_000,
+        expectedMessageId: peeked.result.candidate.messageId,
+        expectedDeliveryAttempt: peeked.result.candidate.deliveryAttempt,
+      },
+    }),
+    (error) => error.code === "MAILBOX_AVAILABILITY_STALE",
+  );
+
+  nowMs += 1_001;
+  const redeliveryPeek = await plane.execute({
+    operation: "mail.peek",
+    data: { ...lease, route },
+  });
+  assert.deepEqual(redeliveryPeek.result.candidate, {
+    messageId: "message-mailbox-peek-claim",
+    deliveryAttempt: 1,
+  });
+  const redelivered = await plane.execute({
+    operation: "mail.claim",
+    idempotencyKey: "mailbox-peek-claim-redelivery",
+    data: {
+      ...lease,
+      route,
+      consumerId: "agent-process-redelivery",
+      visibilityTimeoutMs: 1_000,
+      expectedMessageId: redeliveryPeek.result.candidate.messageId,
+      expectedDeliveryAttempt:
+        redeliveryPeek.result.candidate.deliveryAttempt,
+    },
+  });
+  assert.equal(
+    redelivered.result.message.messageId,
+    "message-mailbox-peek-claim",
+  );
+  assert.equal(redelivered.result.message.deliveryAttempt, 2);
+  assert.equal(redelivered.result.claimToken, "claim-mailbox-redelivery");
+  await plane.close();
+});
+
 test("mailbox pruning bounds retained payloads without allowing message ID reuse", async () => {
   const stateDir = await tempDir("codex-chat-control-prune-");
   let nowMs = Date.parse("2026-07-30T03:30:00.000Z");

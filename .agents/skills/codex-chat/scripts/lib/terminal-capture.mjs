@@ -35,6 +35,7 @@ const RECEIPT_KEYS = new Set([
   "bindings",
   "capture",
   "resultEnvelope",
+  "resultValidation",
   "receiptId",
 ]);
 const BINDING_KEYS = new Set([
@@ -57,6 +58,7 @@ const CAPTURE_KEYS = new Set([
   "truncated",
 ]);
 const RESULT_KEYS = new Set(["objectPath", "sha256", "bytes"]);
+const RESULT_VALIDATION_KEYS = new Set(["status", "errorCode"]);
 const SLOT_KEYS = new Set([
   "kind",
   "protocolVersion",
@@ -252,7 +254,12 @@ async function prepareDirectory(stateDir, runId) {
   };
 }
 
-function buildReceipt({ run, captureBytes, resultBytes }) {
+function buildReceipt({
+  run,
+  captureBytes,
+  resultBytes,
+  resultValidation,
+}) {
   const bindings = {
     runId: run.runId,
     turnId: run.outbound.turnId,
@@ -286,6 +293,9 @@ function buildReceipt({ run, captureBytes, resultBytes }) {
       sha256: resultEnvelopeSha256,
       bytes: resultBytes.byteLength,
     },
+    ...(resultValidation.status === "rejected"
+      ? { resultValidation }
+      : {}),
   };
   return { ...body, receiptId: sha256(stable(body)) };
 }
@@ -365,6 +375,10 @@ function parseReceipt(bytes) {
   const bindings = receipt?.bindings;
   const capture = receipt?.capture;
   const resultEnvelope = receipt?.resultEnvelope;
+  const resultValidation = receipt?.resultValidation ?? {
+    status: "accepted",
+    errorCode: null,
+  };
   if (
     receipt?.kind !== "CODEX_CHAT_TERMINAL_CAPTURE_RECEIPT_V1" ||
     receipt.protocolVersion !== 1 ||
@@ -408,7 +422,20 @@ function parseReceipt(bytes) {
     !SHA256.test(resultEnvelope.sha256 ?? "") ||
     !Number.isInteger(resultEnvelope.bytes) ||
     resultEnvelope.bytes < 1 ||
-    resultEnvelope.bytes > LIMITS_V1.result.maxResultBytes
+    resultEnvelope.bytes > LIMITS_V1.result.maxResultBytes ||
+    !resultValidation ||
+    typeof resultValidation !== "object" ||
+    Array.isArray(resultValidation) ||
+    (
+      receipt.resultValidation !== undefined &&
+      (
+        Object.keys(resultValidation).some(
+          (key) => !RESULT_VALIDATION_KEYS.has(key),
+        ) ||
+        resultValidation.status !== "rejected" ||
+        !/^RESULT_[A-Z0-9_]+$/.test(resultValidation.errorCode ?? "")
+      )
+    )
   ) {
     fail("TERMINAL_CAPTURE_RECEIPT_INVALID", "Terminal capture receipt is malformed.");
   }
@@ -442,6 +469,7 @@ function parseSlot(bytes, receipt, receiptSha256) {
 }
 
 function eventDataFromReceipt(receipt, receiptPath, receiptSha256) {
+  const rejected = receipt.resultValidation?.status === "rejected";
   return {
     turnId: receipt.bindings.turnId,
     terminalMarker: receipt.bindings.terminalMarker,
@@ -455,6 +483,12 @@ function eventDataFromReceipt(receipt, receiptPath, receiptSha256) {
     providerMessageFingerprint: receipt.bindings.providerMessageFingerprint,
     captureReceiptPath: receiptPath,
     captureReceiptSha256: receiptSha256,
+    ...(rejected
+      ? {
+          resultStatus: "rejected",
+          rejectionCode: receipt.resultValidation.errorCode,
+        }
+      : {}),
   };
 }
 
@@ -600,8 +634,27 @@ export async function validateTerminalCaptureReceipt({
       "Stored result bytes do not match the terminal capture boundaries.",
     );
   }
-  const envelope = parseResultEnvelope(decodeUtf8(resultBytes, "Result envelope"));
-  assertEnvelopeBinding(envelope, current);
+  const resultText = decodeUtf8(resultBytes, "Result envelope");
+  if (receipt.resultValidation?.status === "rejected") {
+    let rejection = null;
+    try {
+      parseResultEnvelope(resultText);
+    } catch (error) {
+      rejection = error;
+    }
+    if (
+      !rejection ||
+      rejection.code !== receipt.resultValidation.errorCode
+    ) {
+      fail(
+        "TERMINAL_CAPTURE_REJECTION_MISMATCH",
+        "Rejected result bytes no longer reproduce the recorded validation error.",
+      );
+    }
+  } else {
+    const envelope = parseResultEnvelope(resultText);
+    assertEnvelopeBinding(envelope, current);
+  }
   const bindings = receipt.bindings;
   if (
     bindings.runId !== current.runId ||
@@ -653,9 +706,16 @@ export async function createTerminalCaptureReceipt({
   runId,
   capturePath,
   resultPath,
+  resultMode = "accepted",
   scanner = "gitleaks",
   testMode = false,
 }) {
+  if (!["accepted", "rejected"].includes(resultMode)) {
+    fail(
+      "TERMINAL_CAPTURE_RESULT_MODE_INVALID",
+      "Terminal capture result mode must be accepted or rejected.",
+    );
+  }
   const run = await loadRun({ stateDir, runId });
   assertRunEligible(run, runId);
   const [captureBytes, resultBytes] = await Promise.all([
@@ -674,9 +734,34 @@ export async function createTerminalCaptureReceipt({
       "Saved result bytes do not exactly match the terminal capture boundaries.",
     );
   }
-  const envelope = parseResultEnvelope(resultText);
-  assertEnvelopeBinding(envelope, run);
-  const receipt = buildReceipt({ run, captureBytes, resultBytes });
+  let resultValidation = { status: "accepted", errorCode: null };
+  if (resultMode === "accepted") {
+    const envelope = parseResultEnvelope(resultText);
+    assertEnvelopeBinding(envelope, run);
+  } else {
+    let rejection = null;
+    try {
+      parseResultEnvelope(resultText);
+    } catch (error) {
+      rejection = error;
+    }
+    if (!/^RESULT_[A-Z0-9_]+$/.test(rejection?.code ?? "")) {
+      fail(
+        "TERMINAL_CAPTURE_REJECTION_UNJUSTIFIED",
+        "Rejected capture mode requires an invalid collaboration result.",
+      );
+    }
+    resultValidation = {
+      status: "rejected",
+      errorCode: rejection.code,
+    };
+  }
+  const receipt = buildReceipt({
+    run,
+    captureBytes,
+    resultBytes,
+    resultValidation,
+  });
   const serialized = Buffer.from(`${stable(receipt)}\n`);
   if (serialized.byteLength > MAX_RECEIPT_BYTES) {
     fail(

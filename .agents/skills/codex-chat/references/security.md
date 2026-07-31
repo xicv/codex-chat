@@ -58,6 +58,9 @@ beneath the run directory. `response_terminal`, review start, import, and
 acceptance re-read and hash the receipt, recompute and verify its authoritative
 slot, and re-read both objects. Missing, changed, truncated, crossed, or
 reconstructed evidence fails closed.
+`response_rejected` performs the same immutable receipt and object checks but
+must reproduce the recorded `RESULT_*` failure and enters correction-only
+state; it cannot authorize review, import, verification, or acceptance.
 
 Never include `.env`, API keys, tokens, private keys, cookies, credentials, browser state, databases, runtime state, caches, build products, or VCS internals.
 

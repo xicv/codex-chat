@@ -90,6 +90,7 @@ Typed events:
 | `send_ambiguous` | `send_reserved` | `response_pending_unknown` |
 | `transport_disconnected`, `response_observed` | `send_confirmed`, `response_pending_unknown` | `response_pending_unknown` |
 | `response_terminal` | confirmed/pending/human-required | `response_terminal` |
+| `response_rejected` | confirmed/pending/human-required | `needs_revision`; bind immutable terminal bytes and the exact `RESULT_*` validation failure |
 | `resource_observation`, `local_takeover` | non-terminal | unchanged |
 | `suspended_both_limited` | confirmed/pending | `response_pending_unknown` |
 | `review_started` | `response_terminal` | `reviewing` |
@@ -218,6 +219,14 @@ binding, expected terminal marker, route, provider fingerprint, and task
 binding, then secret-scans and publishes create-once content-addressed objects,
 a receipt, and one authoritative turn slot. It returns the exact
 `response_terminal` event data.
+
+If the boundary bytes are intact but the result envelope is invalid, rerun
+capture with `--result-mode rejected`. The helper requires an exact `RESULT_*`
+failure, publishes the same immutable evidence with that rejection bound into
+the receipt, and returns `response_rejected` data. That event enters
+`needs_revision` only: it cannot start review, import, verification, or
+acceptance. A correction uses a fresh reserved turn and never edits or
+reconstructs the rejected envelope.
 
 Hardened `response_terminal` refuses hash claims without that receipt and
 re-reads the receipt and both stored objects. Review start, import, and final

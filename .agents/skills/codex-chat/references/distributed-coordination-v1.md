@@ -90,8 +90,9 @@ Every request conforms to
 }
 ```
 
-Mutations require a permanent idempotency key. `run.read`, `mail.inspect`, and
-`mail.list` are read-only and forbid one. Successful replies contain the
+Mutations require a permanent idempotency key. `run.read`, `mail.peek`,
+`mail.inspect`, and `mail.list` are read-only and forbid one. Successful
+replies contain the
 authoritative mutation sequence, whether the result was an idempotent replay,
 and the result. Failures contain a stable symbolic code. See
 [`distributed-coordination-response-v1.schema.json`](schemas/distributed-coordination-response-v1.schema.json).
@@ -185,12 +186,24 @@ and per-message limits. Global retained-payload capacity bounds the complete
 authority state. Capacity failures are explicit backpressure; clients wait,
 acknowledge/cancel and prune finalized messages, or split independent work.
 
+Poll with read-only `mail.peek`, which validates the active fence and complete
+route but creates no journal event or idempotency record. It returns either
+`candidate: null` or the next claimable `messageId` and its current
+`deliveryAttempt`; it never returns the payload or a claim token. Even an
+expired in-flight message may be reported because the next mutation can
+redeliver it. Repeated empty peeks therefore consume no durable mutation
+capacity.
+
 `mail.claim` is fenced and names a consumer and visibility timeout. It returns
-one message plus a random claim token, or `message: null`. An expired claim is
-returned to the queue and increments its delivery attempt on redelivery.
-Only work created by the current fencing token is claimable. Use a new
-idempotency key for each poll: replaying a successful empty claim intentionally
-returns the same empty result.
+one message plus a random claim token, or `message: null`. To close the race
+between peek and claim, pass both `expectedMessageId` and
+`expectedDeliveryAttempt`; the serialized authority returns
+`MAILBOX_AVAILABILITY_STALE` unless that exact candidate is still next.
+Omitting both fields preserves the v1-compatible unbound claim. An expired
+claim is returned to the queue and increments its delivery attempt on
+redelivery. Only work created by the current fencing token is claimable. Do not
+use empty `mail.claim` calls as a polling primitive because every claim
+mutation permanently consumes journal and idempotency capacity.
 
 `mail.ack` requires the same current coordinator fence, consumer, unexpired
 claim token, route, and message ID. This provides at-least-once delivery with
@@ -204,8 +217,8 @@ external send or side effect that already completed.
 
 `mail.prune` accepts a bounded list of acknowledged or cancelled message IDs.
 It deletes their payloads while retaining immutable ID/digest/status
-tombstones, so pruned IDs cannot be reused. `mail.inspect` and `mail.list` are
-read-only inspection operations.
+tombstones, so pruned IDs cannot be reused. `mail.peek`, `mail.inspect`, and
+`mail.list` are read-only inspection operations.
 
 The transport token is deployment-wide authority. In v1 an agent process that
 directly claims or acknowledges also receives the current fence fields and is

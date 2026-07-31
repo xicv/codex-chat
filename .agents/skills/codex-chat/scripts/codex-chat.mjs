@@ -347,6 +347,7 @@ async function main() {
         runId: required(options, "run-id"),
         capturePath: required(options, "capture"),
         resultPath: required(options, "result"),
+        resultMode: options["result-mode"] ?? "accepted",
         scanner: "gitleaks",
       }),
     );

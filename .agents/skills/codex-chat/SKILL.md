@@ -293,6 +293,19 @@ Once `send_confirmed` is durable:
 - On ambiguous send completion, record `send_ambiguous`; do not guess.
 - Save conversation links and terminal markers.
 
+Before sending, set an external-response observation budget appropriate to the
+task's expected depth. This is a local-progress deadline, never a delivery
+timeout. When the budget expires, perform one read-only reconciliation. If
+exactly one submitted marker remains visible, the response is still
+non-terminal, and no provider-terminal failure is visible, record
+`local_takeover` with the elapsed time and observation evidence; the response
+remains pending and observe-only, and independence stays degraded for the run.
+Do not cancel the provider generation, click Stop, resend, switch transports,
+close the bound task space, or record a terminal response. Continue local work
+without waiting on the provider, and opportunistically observe the original
+turn when doing so does not block the user. If it later becomes terminal,
+capture and review it normally without restoring independence retroactively.
+
 Record transport and allowance observations with their source, observation
 time, and expiry when known. Noncritical equivalent observations may set
 `coalesce: true`; repeats within five seconds do not grow the ledger. Use
@@ -326,6 +339,12 @@ After a terminal response:
      --capture /private/tmp/codex-chat-terminal-response.txt \
      --result /private/tmp/codex-chat-result.json
    ```
+   If the exact boundary bytes fail only `COLLAB_RESULT_V1` validation, rerun
+   the same immutable capture with `--result-mode rejected`. This mode must
+   reproduce one exact `RESULT_*` error. Record the returned
+   `response_rejected` event data, which enters correction-only
+   `needs_revision`; do not start review, import, verification, or acceptance,
+   and never edit or reconstruct the collaborator's malformed envelope.
 2. Validate that exact saved JSON file with `import`; do not reconstruct it or hand-apply an untrusted patch to the working tree. `import` rejects bytes that do not match the durable terminal envelope digest. An advisory result is quarantined, scanned, and receipted without source mutation.
 3. For a patch result, apply only to an explicit scratch copy. `import` scans the quarantined result, serializes by canonical scratch target, creates a write-ahead receipt, and performs a final no-follow inode/preimage comparison before target replacement. The MVP accepts one existing UTF-8/LF regular file, exact preimage SHA-256, and zero-fuzz unified diff hunks. It rejects creation, deletion, rename, mode, binary, multi-file, stale, symlinked, raced, and out-of-scope changes.
 4. Review the postimage independently. Never accept the collaborator's test claims as evidence.

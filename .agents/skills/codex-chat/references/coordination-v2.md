@@ -20,8 +20,10 @@ envelope separately from the context artifact. `send_reserved` adds exactly one
 `send_confirmed` must repeat the whole route, outbound marker, conversation
 identity, provider namespace, transport, canonical locator, observation time,
 and provider-message fingerprint when one is observable.
-`response_terminal` must cite the create-once terminal capture receipt. A
-mismatch is rejected rather than attached to the nearest active run.
+`response_terminal` must cite the create-once terminal capture receipt.
+`response_rejected` cites the same immutable evidence plus the exact
+`RESULT_*` validation failure and can enter only correction state. A mismatch
+is rejected rather than attached to the nearest active run.
 
 Every writer still supplies expected event sequence and phase. The hash-chained
 ledger is one compare-and-swap stream per run. Outbound idempotency keys and
@@ -87,10 +89,13 @@ mailbox = (workspaceId, coordinatorId, runId, workUnitId, agentId)
 
 Enqueue binds the direct message ID, correlation ID, causal parent ID, route
 tuple, payload digest, current coordinator fence, and exact non-terminal
-distributed run head. Claim, acknowledgement, cancellation, and finalized
-message pruning are durable mutations. Visibility expiry provides redelivery;
-mailbox count/byte/in-flight/retention limits provide explicit backpressure.
-Crossed route, claim, fence, or causal bindings fail closed.
+distributed run head. Availability polling uses read-only `mail.peek` and
+creates no journal or idempotency record. The subsequent claim may bind the
+exact peeked message ID and delivery attempt so a competing consumer makes it
+fail closed. Claim, acknowledgement, cancellation, and finalized message
+pruning are durable mutations. Visibility expiry provides redelivery; mailbox
+count/byte/in-flight/retention limits provide explicit backpressure. Crossed
+route, claim, fence, availability, or causal bindings fail closed.
 
 Broadcasts remain an unimplemented evidence contract and should be
 evidence-only by default:

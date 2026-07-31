@@ -95,6 +95,18 @@
         }
       }
     },
+    "resultValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "errorCode"],
+      "properties": {
+        "status": { "const": "rejected" },
+        "errorCode": {
+          "type": "string",
+          "pattern": "^RESULT_[A-Z0-9_]+$"
+        }
+      }
+    },
     "receiptId": { "$ref": "#/$defs/sha256" }
   },
   "$defs": {

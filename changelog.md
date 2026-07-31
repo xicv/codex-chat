@@ -32,6 +32,13 @@ that introduced each change; merge-only commits are omitted.
   conversation leasing across transports.
 - A neutral transport-probe release that frees an unused primary claim without
   falsely marking the browser host healthy or failed.
+- A bounded external-response observation budget that permits durable local
+  takeover without cancelling, resending, switching transports, closing the
+  bound task space, or misclassifying a still-running provider response.
+- Capacity-neutral `mail.peek` polling and optional exact
+  message/delivery-attempt binding for the subsequent fenced claim.
+- Immutable rejection receipts for schema-invalid collaborator results, with a
+  correction-only `response_rejected` transition.
 
 ### Fixed
 
@@ -51,6 +58,19 @@ that introduced each change; merge-only commits are omitted.
   the exact reserved envelope and one send control, clicks once, and reconciles
   missing command output without resending. Temporary `/c/WEB:` paths are
   treated as provisional until a stable provider conversation locator appears.
+- Multiline Ego drafts no longer fail exact-envelope checks because
+  ProseMirror's `innerText` inflates paragraph breaks. The fallback reconstructs
+  exact paragraph text, preserves empty lines, and stops on unsupported composer
+  DOM without clearing, typing, or sending.
+- Ego compose scripts now load persisted envelopes with an ESM-safe dynamic
+  import, avoiding the pre-browser module-format failure caused by mixing
+  CommonJS `require` with top-level `await`.
+- Quiet mailbox polling no longer exhausts the control plane's permanent
+  idempotency capacity, and a claim can now fail closed if another consumer
+  wins after the availability probe.
+- Malformed terminal result envelopes no longer leave valid response evidence
+  outside the run state machine; their exact bytes and validation error are
+  captured before requesting a fresh correction turn.
 
 ## 2026-07-30
 

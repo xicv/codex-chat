@@ -26,6 +26,7 @@ export const DISTRIBUTED_COORDINATION_OPERATIONS = Object.freeze([
   "conversation.claim",
   "conversation.release",
   "mail.enqueue",
+  "mail.peek",
   "mail.claim",
   "mail.ack",
   "mail.cancel",
@@ -34,7 +35,12 @@ export const DISTRIBUTED_COORDINATION_OPERATIONS = Object.freeze([
   "mail.list",
 ]);
 const OPERATION_SET = new Set(DISTRIBUTED_COORDINATION_OPERATIONS);
-const QUERY_OPERATIONS = new Set(["mail.inspect", "mail.list", "run.read"]);
+const QUERY_OPERATIONS = new Set([
+  "mail.peek",
+  "mail.inspect",
+  "mail.list",
+  "run.read",
+]);
 const DEFAULT_LIMITS = Object.freeze({
   mailbox: LIMITS_DISTRIBUTED_V1.mailbox,
 });
@@ -1045,6 +1051,58 @@ function validateVisibilityTimeout(state, value) {
   return value;
 }
 
+function applyMailPeek(state, data, { nowMs }) {
+  const coordinator = activeLease(state, data, nowMs);
+  const route = validateRoute(data?.route);
+  if (
+    route.workspaceId !== coordinator.workspaceId ||
+    route.runId !== coordinator.runId
+  ) {
+    fail(
+      "MAILBOX_ROUTE_MISMATCH",
+      "Mailbox route does not match the active coordinator lease.",
+    );
+  }
+  const head = state.runHeads[leaseKey(route.workspaceId, route.runId)];
+  if (head?.terminal) {
+    fail("DISTRIBUTED_RUN_TERMINAL", "Terminal runs cannot claim new work.");
+  }
+  const mailbox = state.mailboxes[routeKey(route)] ?? {
+    route,
+    messageIds: [],
+  };
+  const messages = mailbox.messageIds
+    .map((messageId) => ownValue(state.messages, messageId))
+    .filter(Boolean);
+  const inFlight = messages.filter(
+    (message) =>
+      message.status === "in_flight" &&
+      message.visibilityExpiresAtMs > nowMs,
+  ).length;
+  const message = inFlight >= state.limits.mailbox.maxInFlight
+    ? null
+    : messages.find(
+      (candidate) =>
+        (
+          candidate.status === "queued" ||
+          (
+            candidate.status === "in_flight" &&
+            candidate.visibilityExpiresAtMs <= nowMs
+          )
+        ) &&
+        candidate.fencingToken === coordinator.fencingToken,
+    );
+  return {
+    route: structuredClone(route),
+    candidate: message
+      ? {
+          messageId: message.messageId,
+          deliveryAttempt: message.deliveryAttempt,
+        }
+      : null,
+  };
+}
+
 function applyMailClaim(state, data, { nowMs, randomId }) {
   const coordinator = activeLease(state, data, nowMs);
   const route = validateRoute(data?.route);
@@ -1066,6 +1124,33 @@ function applyMailClaim(state, data, { nowMs, randomId }) {
     state,
     data?.visibilityTimeoutMs,
   );
+  const hasExpectedMessageId = data?.expectedMessageId !== undefined;
+  const hasExpectedDeliveryAttempt =
+    data?.expectedDeliveryAttempt !== undefined;
+  if (hasExpectedMessageId !== hasExpectedDeliveryAttempt) {
+    fail(
+      "MAILBOX_AVAILABILITY_BINDING_INVALID",
+      "Mailbox claim availability binding requires both message ID and delivery attempt.",
+    );
+  }
+  const expectedMessageId = hasExpectedMessageId
+    ? validateId(data.expectedMessageId, "expectedMessageId")
+    : null;
+  const expectedDeliveryAttempt = hasExpectedDeliveryAttempt
+    ? data.expectedDeliveryAttempt
+    : null;
+  if (
+    expectedDeliveryAttempt !== null &&
+    (
+      !Number.isSafeInteger(expectedDeliveryAttempt) ||
+      expectedDeliveryAttempt < 0
+    )
+  ) {
+    fail(
+      "MAILBOX_AVAILABILITY_BINDING_INVALID",
+      "Mailbox claim expected delivery attempt is invalid.",
+    );
+  }
   const mailbox = state.mailboxes[routeKey(route)] ?? {
     route,
     messageIds: [],
@@ -1087,17 +1172,30 @@ function applyMailClaim(state, data, { nowMs, randomId }) {
   const inFlight = messages.filter(
     (message) => message.status === "in_flight",
   ).length;
+  const message = messages.find(
+    (candidate) =>
+      candidate.status === "queued" &&
+      candidate.fencingToken === coordinator.fencingToken,
+  );
+  if (
+    expectedMessageId !== null &&
+    (
+      !message ||
+      message.messageId !== expectedMessageId ||
+      message.deliveryAttempt !== expectedDeliveryAttempt
+    )
+  ) {
+    fail(
+      "MAILBOX_AVAILABILITY_STALE",
+      "Mailbox availability changed before the exact claim.",
+    );
+  }
   if (inFlight >= state.limits.mailbox.maxInFlight) {
     fail(
       "MAILBOX_IN_FLIGHT_LIMIT",
       "Mailbox in-flight claim limit is exhausted.",
     );
   }
-  const message = messages.find(
-    (candidate) =>
-      candidate.status === "queued" &&
-      candidate.fencingToken === coordinator.fencingToken,
-  );
   if (!message) {
     return { message: null, claimToken: null };
   }
@@ -1336,8 +1434,10 @@ function applyMutation(state, request, runtime) {
   }
 }
 
-function applyQuery(state, request) {
+function applyQuery(state, request, runtime) {
   switch (request.operation) {
+    case "mail.peek":
+      return applyMailPeek(state, request.data, runtime);
     case "mail.inspect": {
       const route = validateRoute(request.data?.route);
       const messageId = validateId(request.data?.messageId, "messageId");
@@ -1623,10 +1723,18 @@ export async function openCoordinationControlPlane({
   const executeSerialized = async (request) => {
     validateRequest(request);
     if (QUERY_OPERATIONS.has(request.operation)) {
+      let runtime = {};
+      if (request.operation === "mail.peek") {
+        const observedNow = clock();
+        if (!Number.isSafeInteger(observedNow) || observedNow < 0) {
+          fail("COORDINATION_CLOCK_INVALID", "Control-plane clock is invalid.");
+        }
+        runtime = { nowMs: Math.max(state.logicalTimeMs, observedNow) };
+      }
       return {
         sequence: state.sequence,
         idempotent: false,
-        result: applyQuery(state, request),
+        result: applyQuery(state, request, runtime),
       };
     }
     const requestDigest = digest({

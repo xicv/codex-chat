@@ -25,6 +25,7 @@ const TERMINAL = new Set(["accepted", "blocked"]);
 const OUTBOUND_EVENTS = new Set(["send_reserved", "send_confirmed"]);
 const COMPLETION_EVENTS = new Set([
   "response_terminal",
+  "response_rejected",
   "review_started",
   "validation_started",
   "verification_recorded",
@@ -49,6 +50,10 @@ const EVENT_STATES = Object.freeze({
   response_terminal: {
     from: ["send_confirmed", "response_pending_unknown", "human_required"],
     to: "response_terminal",
+  },
+  response_rejected: {
+    from: ["send_confirmed", "response_pending_unknown", "human_required"],
+    to: "needs_revision",
   },
   provider_terminal_failure: {
     from: ["send_confirmed", "response_pending_unknown"],
@@ -386,7 +391,7 @@ export async function loadRun({ stateDir, runId, repair = false }) {
   return derived;
 }
 
-function assertTerminalResponseBinding(current, data) {
+function assertTerminalResponseBinding(current, data, event) {
   if (
     typeof data.turnId !== "string" ||
     data.turnId !== current?.outbound?.turnId ||
@@ -401,6 +406,18 @@ function assertTerminalResponseBinding(current, data) {
     fail(
       "TERMINAL_RESPONSE_INVALID",
       "response_terminal must bind the active turn, expected terminal marker, full response digest, result envelope digest, and conversation identity.",
+    );
+  }
+  if (
+    event === "response_rejected" &&
+    (
+      data.resultStatus !== "rejected" ||
+      !/^RESULT_[A-Z0-9_]+$/.test(data.rejectionCode ?? "")
+    )
+  ) {
+    fail(
+      "TERMINAL_RESPONSE_REJECTION_INVALID",
+      "response_rejected must bind the exact result-validation error.",
     );
   }
   if (
@@ -686,7 +703,9 @@ function reduce(current, event, data, at) {
       );
     }
   }
-  if (event === "response_terminal") assertTerminalResponseBinding(current, data);
+  if (["response_terminal", "response_rejected"].includes(event)) {
+    assertTerminalResponseBinding(current, data, event);
+  }
   const phase = rule.to === "=" ? currentPhase : rule.to;
   const collaboration = {
     conversationUrl: current?.collaboration?.conversationUrl ?? null,
@@ -753,7 +772,7 @@ function reduce(current, event, data, at) {
     collaboration.conversationUrl = data.conversationUrl ?? collaboration.conversationUrl;
     collaboration.outboundTurnId = data.turnId;
   }
-  if (event === "response_terminal") {
+  if (["response_terminal", "response_rejected"].includes(event)) {
     collaboration.conversationUrl = data.conversationUrl ?? collaboration.conversationUrl;
     collaboration.terminalMarker = data.terminalMarker;
     collaboration.responseBinding = {
@@ -766,6 +785,12 @@ function reduce(current, event, data, at) {
         ? {
             captureReceiptPath: data.captureReceiptPath,
             captureReceiptSha256: data.captureReceiptSha256,
+          }
+        : {}),
+      ...(event === "response_rejected"
+        ? {
+            resultStatus: data.resultStatus,
+            rejectionCode: data.rejectionCode,
           }
         : {}),
     };
@@ -831,7 +856,7 @@ function reduce(current, event, data, at) {
     }, at);
   }
   const suspended =
-    event === "response_terminal"
+    ["response_terminal", "response_rejected"].includes(event)
       ? null
       : event === "suspended_both_limited"
       ? {
@@ -1014,7 +1039,7 @@ export async function recordEvent({
       };
     }
     if (
-      event === "response_terminal" &&
+      ["response_terminal", "response_rejected"].includes(event) &&
       hardenedBinding(current?.outbound)
     ) {
       if (
@@ -1037,7 +1062,10 @@ export async function recordEvent({
       });
     }
     if (
-      ["review_started", "accepted"].includes(event) &&
+      (
+        (event === "review_started" && current?.phase === "response_terminal") ||
+        event === "accepted"
+      ) &&
       hardenedBinding(current?.outbound)
     ) {
       const { revalidateActiveTerminalCapture } = await import(

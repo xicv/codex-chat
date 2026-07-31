@@ -145,6 +145,7 @@ When participants span hosts, the opt-in `control-serve` process becomes one
 authoritative coordination seam. It persists monotonic coordinator epochs and
 fencing tokens, an exact distributed run head, provider-conversation claims,
 and bounded partitioned mailboxes with visibility redelivery,
+capacity-neutral availability peeks, exact peek-to-claim binding,
 acknowledgement, cancellation, and finalized-payload pruning. The local run
 ledger remains the richer browser-workflow and acceptance-evidence record.
 See
@@ -398,15 +399,21 @@ model label, agentic allowance, upload capability, and API budget separately.
   attempt. If login or verification is required, control returns to the user;
   if Ego itself fails, the branch stops without retries or another surface.
 - Ego sends preserve the durable marker outside the browser command, reject
-  unknown persisted drafts, type only into an empty composer, and use one
-  verified send-button click. Compose, submit, and observe are separate, so
+  unknown persisted drafts, and canonicalize multiline ProseMirror paragraphs
+  from exact `textContent` instead of inflated `innerText`. Unexpected composer
+  shapes stop without mutation. Ego types only into an empty composer and uses
+  one verified send-button click. Compose, submit, and observe are separate, so
   missing command output is reconciled read-only instead of retried.
 - A healthy primary with an unavailable authenticated composer is a provider
   or user-authentication blocker, not a reason to switch browsers.
 - The selected transport is bound to the complete run. Any possible upload or
   send closes the fallback window; ambiguous delivery is preserved and never
   resent through the other browser.
-- A slow or disconnected response remains observe-only after submission.
+- A slow or disconnected response remains observe-only after submission. A
+  preselected observation budget can release the local critical path by
+  recording degraded independence and continuing local work, without
+  cancelling, resending, switching transports, or pretending the provider
+  response is terminal.
 - A changed reset time or refreshed page never authorizes another send.
 - A conclusively failed provider turn ends the current run.
 - If the collaborator is temporarily limited, the run records the observation
@@ -422,6 +429,8 @@ model label, agentic allowance, upload capability, and API budget separately.
   evidence. It proves neither upload automation nor model visibility.
 - A terminal capture receipt binds the exact task, full response, extracted
   result, route, conversation, turn, provider fingerprint, and terminal marker.
+  A schema-invalid result is durably rejected into correction-only state with
+  its exact `RESULT_*` failure instead of becoming an uncaptured dead end.
 - Equivalent noncritical resource observations may coalesce within five
   seconds. General idempotency snapshots retain 128 records, outbound records
   remain permanent, and a run history segment is capped at 1,024 events before
@@ -429,9 +438,11 @@ model label, agentic allowance, upload capability, and API budget separately.
   completion.
 - Distributed coordination separately bounds journal, snapshot, idempotency
   results, retained payloads, message tombstones, mailbox count/bytes, claims,
-  and request rate. Near a lifetime segment limit, make all runs terminal and
-  archive the segment; never discard an active segment's fences or
-  idempotency state.
+  and request rate. Workers poll with read-only `mail.peek`, then bind
+  `mail.claim` to the exact observed message and delivery attempt; 100,000
+  empty peeks consume zero journal or idempotency records. Near a lifetime
+  segment limit, make all runs terminal and archive the segment; never discard
+  an active segment's fences or idempotency state.
 - Paid API fallback and automatic credit purchase are disabled by policy.
 
 ## Development

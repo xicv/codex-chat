@@ -31,7 +31,7 @@
           "not": {
             "properties": {
               "operation": {
-                "enum": ["run.read", "mail.inspect", "mail.list"]
+                "enum": ["run.read", "mail.peek", "mail.inspect", "mail.list"]
               }
             },
             "required": ["operation"]

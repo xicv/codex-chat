@@ -22,6 +22,16 @@ that introduced each change; merge-only commits are omitted.
 - A provider-readiness gate that opens or claims the intended collaborator
   conversation and verifies an authenticated composer before selecting or
   packaging source.
+- An app-wide transport circuit breaker that serializes health probes across
+  coordinators, remembers the exact failed browser-host generation, suppresses
+  repeated calls into a closed transport, and verifies that recovery actually
+  changed the host process before one half-open probe.
+- A one-shot Ego Browser fallback after conclusive pre-send primary failure,
+  with isolated task spaces, bounded readiness output, user-owned
+  authentication, immutable per-run transport selection, and provider-level
+  conversation leasing across transports.
+- A neutral transport-probe release that frees an unused primary claim without
+  falsely marking the browser host healthy or failed.
 
 ### Fixed
 
@@ -31,6 +41,16 @@ that introduced each change; merge-only commits are omitted.
   capsule before discovering that no browser-backed submission is possible.
 - Provider navigation, authentication, or composer failures now stop before
   capsule preparation instead of after source has already been packaged.
+- Restart guidance is no longer trusted as an action: unchanged ChatGPT and
+  browser-host generations keep the circuit open and prevent another
+  `node_repl` call.
+- Browser fallback can no longer start after a possible upload or send, and a
+  failed selected transport cannot trigger a retry through another browser.
+- Ego submission no longer uses append-prone `fillInput` or Enter on ChatGPT's
+  contenteditable composer. It now rejects unknown persisted drafts, verifies
+  the exact reserved envelope and one send control, clicks once, and reconciles
+  missing command output without resending. Temporary `/c/WEB:` paths are
+  treated as provisional until a stable provider conversation locator appears.
 
 ## 2026-07-30
 

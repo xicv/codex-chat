@@ -138,18 +138,47 @@ provider, logical conversation, UI-label, and stable-locator observations.
 Do not inspect cookies, profiles, passwords, session stores, or other
 credential material, and do not type, paste, attach, upload, or send.
 
-A `Transport closed` result from the `node_repl` tool transport is not repaired
-by `js_reset` or by selecting another surface backed by that transport.
-Reacquire the tool once, repeat one no-I/O probe, then stop before source
-preparation if it remains closed. An unavailable authenticated composer or
-another provider-readiness failure also stops before source preparation. A
-failure in this gate means no capsule was prepared or transmitted; it is not a
-provider-terminal failure and creates no external collaborator claims.
+The built-in Browser is primary. A `Transport closed` result from its
+`node_repl` transport is not repaired by `js_reset` or another surface backed
+by that transport. Reacquire the tool once and repeat one no-I/O probe. A
+repeated failure opens the app-wide circuit for the exact
+`codex-code-mode-host` generation. Later coordinators do not call that
+generation again.
+
+Claim tokens, a two-minute expiry, and a local file lock prevent one
+coordinator from completing another coordinator's probe. A missing primary
+tool or supported read-only runtime releases its claim to an `idle` state
+without claiming success or failure. A concurrent `probe_in_progress` stops;
+it never starts a second browser writer.
+
+Ego Browser is the sole pre-send alternative after a conclusive primary
+outage. Its skill and CLI must already be installed. It receives one isolated
+task space and one read-only readiness attempt, emits no snapshot or
+conversation text, and never exposes browser profiles or credential state.
+Installation, login, account selection, CAPTCHA, passkeys, passwords, and
+two-factor verification remain user actions. A failed Ego attempt stops
+without retry or another surface.
+
+The selected transport is immutable for the run. Ego task-space identifiers
+are transport observations, not provider conversation identities or locators;
+provider-level leases therefore continue to prevent two local coordinators
+from writing one conversation through different browser transports. An
+unavailable authenticated composer on a healthy primary is a provider or
+user-authentication blocker, not authorization to switch transports. Any
+pre-send gate failure means no capsule was prepared or transmitted; it is not
+a provider-terminal failure and creates no external collaborator claims.
 
 If the transport closes during or after an action that might have submitted
 content, delivery is ambiguous. Preserve the outbound marker and reconcile it
 after transport recovery; never reinterpret the same error as proof of
 non-delivery.
+
+Ego composition is fail-closed around the inherited ChatGPT draft. The writer
+may type only into an empty composer or reuse the exact reserved envelope. It
+never uses append-prone `fillInput`, never clears an unknown draft, and never
+submits with Enter. A separate submit command verifies one enabled send control
+and performs one explicit click; a separate observer reconciles the durable
+marker if terminal output is missing.
 
 After `send_confirmed`, absence of evidence is not evidence of failed delivery. Disconnect, timeout, idle, missing output, stale UI, and changed allowance reset time never permit resend.
 

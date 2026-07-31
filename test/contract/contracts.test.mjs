@@ -47,19 +47,34 @@ test("skill proves browser and provider readiness before preparing outbound sour
   const gate = instructions.slice(transportGate, contextPreparation);
   assert.match(
     gate,
-    /Before selecting outbound files, packing, scanning, creating a run, or reserving a send/,
+    /Before selecting outbound files, packing, scanning, creating a run, or\s+reserving a send/,
   );
+  assert.match(gate, /transport-gate --action claim/);
+  assert.match(gate, /If `probeAllowed` is false, do not call\s+`node_repl\/js`/);
+  assert.match(gate, /same_host_generation_failed/);
+  assert.match(gate, /probe_in_progress/);
+  assert.match(gate, /built-in Browser is the primary transport/);
+  assert.match(
+    gate,
+    /Ego\s+Browser is the only permitted alternative[\s\S]*conclusively unavailable/,
+  );
+  assert.match(gate, /read \[ego-browser\.md\]\(references\/ego-browser\.md\)/);
   assert.match(gate, /nodeRepl\.write\("CODEX_CHAT_TRANSPORT_OK"\)/);
   assert.match(
     gate,
-    /reacquire `node_repl\/js` through\s+tool discovery once/,
+    /reacquire\s+`node_repl\/js` through tool discovery once/,
   );
-  assert.match(gate, /Do not call `js_reset`/);
+  assert.match(gate, /Do\s+not call `js_reset`/);
   assert.match(
     gate,
-    /Do not\s+switch to another\s+`node_repl`-backed surface/,
+    /Do\s+not switch to\s+another `node_repl`-backed surface/,
   );
-  assert.match(gate, /restart(?:ing)? the ChatGPT\s+desktop app/);
+  assert.match(gate, /restart of the ChatGPT\s+desktop app/);
+  assert.match(
+    gate,
+    /transport-gate \\\n\s+--action failure \\\n\s+--claim-token <claim-token>/,
+  );
+  assert.match(gate, /browser-host\s+PIDs\/start times/);
   assert.match(gate, /no capsule was prepared or transmitted/);
   assert.match(
     gate,
@@ -80,6 +95,125 @@ test("skill proves browser and provider readiness before preparing outbound sour
   assert.match(
     gate,
     /If provider readiness fails[\s\S]*no capsule was prepared or transmitted/,
+  );
+  assert.match(
+    gate,
+    /Bind the selected transport for the complete run[\s\S]*do not switch/,
+  );
+  assert.match(
+    gate,
+    /If any action might have uploaded or submitted content[\s\S]*never\s+start the Ego fallback/,
+  );
+});
+
+test("Ego fallback is one-shot, read-only, user-authenticated, and route-bound", async () => {
+  const fallback = await readFile(
+    path.resolve(
+      ".agents/skills/codex-chat/references/ego-browser.md",
+    ),
+    "utf8",
+  );
+
+  assert.match(fallback, /Ego Browser is a pre-send fallback/);
+  assert.match(
+    fallback,
+    /only after the\s+built-in Browser is conclusively unavailable/,
+  );
+  assert.match(fallback, /Do not use\s+`which ego-browser`/);
+  assert.match(fallback, /ego-browser nodejs <<'EOF'/);
+  assert.match(fallback, /crypto\.randomUUID\(\)/);
+  assert.match(fallback, /useOrCreateTaskSpace/);
+  assert.match(fallback, /openOrReuseTab\('https:\/\/chatgpt\.com\/'/);
+  assert.match(fallback, /pageInfo\(\)/);
+  assert.match(fallback, /snapshotText\(\)/);
+  assert.match(fallback, /composerReady/);
+  assert.match(fallback, /authenticated/);
+  assert.match(fallback, /challengePresent/);
+  assert.match(
+    fallback,
+    /Do not print the snapshot or conversation content/,
+  );
+  assert.match(fallback, /handOffTaskSpace\(taskSpaceId\)/);
+  assert.match(
+    fallback,
+    /[Oo]nly after the user explicitly\s+confirms[\s\S]*takeOverTaskSpace\(taskSpaceId\)/,
+  );
+  assert.match(
+    fallback,
+    /If that one recheck fails,\s+stop/,
+  );
+  assert.match(
+    fallback,
+    /Never inspect cookies, profiles, passwords,[\s\S]*session storage/,
+  );
+  assert.match(fallback, /transportKind: "ego-browser"/);
+  assert.match(
+    fallback,
+    /task-space ID\s+is transport evidence, not a provider conversation identity or locator/,
+  );
+  assert.match(
+    fallback,
+    /Reuse the same numeric\s+task-space ID for the complete run/,
+  );
+  assert.match(
+    fallback,
+    /If Ego fails after selection, stop[\s\S]*Do not return to the built-in Browser or try a third surface/,
+  );
+  assert.match(fallback, /completeTaskSpace\(taskSpaceId, \{ keep: false \}\)/);
+});
+
+test("Ego submission classifies stale drafts and preserves at-most-once reconciliation", async () => {
+  const fallback = await readFile(
+    path.resolve(
+      ".agents/skills/codex-chat/references/ego-browser.md",
+    ),
+    "utf8",
+  );
+  const submitStart = fallback.indexOf("## Submit one bound turn");
+  const cleanupStart = fallback.indexOf("## Finish the task space");
+  assert.notEqual(submitStart, -1);
+  assert.ok(submitStart < cleanupStart);
+  const submit = fallback.slice(submitStart, cleanupStart);
+
+  assert.match(submit, /durable `send_reserved` marker/);
+  assert.match(
+    submit,
+    /Do not generate the marker inside a browser heredoc/,
+  );
+  assert.match(submit, /Never use `fillInput` for ChatGPT's `contenteditable`/);
+  assert.match(submit, /classify any stale draft/);
+  assert.match(submit, /Never clear or overwrite an unknown\s+draft/);
+  assert.match(
+    submit,
+    /exactly equals the expected task envelope[\s\S]*reuse\s+it without typing/,
+  );
+  assert.match(
+    submit,
+    /Only call `typeText\(taskEnvelope\)` when the normalized composer is empty/,
+  );
+  assert.match(submit, /typeText\(taskEnvelope\)/);
+  assert.match(
+    submit,
+    /composer text exactly\s+equals the expected task envelope/,
+  );
+  assert.match(submit, /exactly one\s+enabled send control/);
+  assert.match(submit, /click\(sendLocator/);
+  assert.match(submit, /Do not use Enter or `pressKey` to submit/);
+  assert.match(
+    submit,
+    /separate bounded heredocs for compose, submit, and observe/,
+  );
+  assert.match(
+    submit,
+    /exactly one user turn contains the durable marker/,
+  );
+  assert.match(
+    submit,
+    /missing\s+terminal output[\s\S]*read-only marker reconciliation[\s\S]*never\s+resend/,
+  );
+  assert.match(
+    submit,
+    /`\/c\/WEB:`[\s\S]*provisional[\s\S]*stable canonical conversation locator/,
   );
 });
 
@@ -307,6 +441,7 @@ test("CLI exposes machine-readable help and version without repository context",
     help.json.data.commands,
     [
       "preflight",
+      "transport-gate",
       "pack",
       "manifest",
       "delivery-receipt",

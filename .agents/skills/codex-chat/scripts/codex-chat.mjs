@@ -25,12 +25,14 @@ import {
   createTerminalCaptureReceipt,
   revalidateActiveTerminalCapture,
 } from "./lib/terminal-capture.mjs";
+import { transportGate } from "./lib/transport-gate.mjs";
 import { runVerification } from "./lib/verify.mjs";
 
 const CLI_VERSION = "0.1.0";
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const COMMANDS = [
   "preflight",
+  "transport-gate",
   "pack",
   "manifest",
   "delivery-receipt",
@@ -155,6 +157,10 @@ async function main() {
     options["state-dir"] ??
     process.env.CODEX_CHAT_STATE_DIR ??
     path.join(os.homedir(), ".codex", "codex-chat", "runs");
+  const transportStateDir =
+    options["transport-state-dir"] ??
+    process.env.CODEX_CHAT_TRANSPORT_STATE_DIR ??
+    path.join(os.homedir(), ".codex", "codex-chat", "transport");
   if (command === "control-serve") {
     const token = requiredControlToken();
     const hasTlsKey = Object.hasOwn(options, "tls-key");
@@ -268,6 +274,17 @@ async function main() {
         stateDir,
         includes: options.include,
         scanner: "gitleaks",
+      }),
+    );
+    return;
+  }
+  if (command === "transport-gate") {
+    emitSuccess(
+      command,
+      await transportGate({
+        action: required(options, "action"),
+        claimToken: options["claim-token"] ?? null,
+        transportStateDir,
       }),
     );
     return;

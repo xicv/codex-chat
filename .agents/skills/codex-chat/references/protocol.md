@@ -2,27 +2,77 @@
 
 ## Pre-run browser and provider-readiness gate
 
-The controller proves the host tool transport, one read-only browser
-capability, and the intended provider page before selecting outbound source,
-generating or scanning a capsule, creating a run, or reserving a send. It
-opens or claims the intended external collaborator conversation and verifies
-an authenticated composer from a fresh read-only page observation. It records
-the provider namespace, a unique logical conversation identity, the observed
-UI label, and any stable locator already available without routing by title or
-model label. It does not type, paste, attach, upload, or send. This
-zero-source-egress gate is outside the run ledger because no collaboration run
-exists yet.
+The built-in Browser is primary. Ego Browser is the only alternative and is
+eligible only when the primary is conclusively unavailable before source
+selection, capsule creation, run creation, send reservation, upload, or send.
+Once selected, one transport remains bound to the complete run.
+
+Before built-in Browser tool discovery, the controller atomically claims the
+app-wide transport circuit in `~/.codex/codex-chat/transport`. The claim records
+the ChatGPT and `codex-code-mode-host` process generations and serializes the
+bounded health probe across coordinators on the same desktop login. An
+unexpired claim held by another coordinator denies a concurrent probe and also
+denies Ego fallback, because a second browser writer could cross the active
+coordinator.
+
+An open circuit for the current browser-host generation denies the probe
+without calling the already-closed tool transport. The circuit becomes
+half-open only after the browser-host process generation changes. A successful
+no-I/O probe plus supported read-only browser and provider checks closes it. A
+non-transport provider blocker also closes it after browser health is proven,
+while a repeated `Transport closed` result opens it. Claim completion is
+token- and generation-bound, so a stale coordinator cannot close or trip
+another coordinator's probe.
+
+If primary tool discovery, supported runtime initialization, or a read-only
+browser capability is unavailable without returning `Transport closed`, the
+claim owner performs a neutral `release`. The gate records an `idle` state,
+removes the claim, and records neither transport success nor failure. This
+allows immediate fallback without leaving another coordinator blocked until
+the two-minute claim expiry.
 
 If the `node_repl` tool transport returns `Transport closed`, the controller
 may rediscover the tool once and repeat one no-I/O probe. It does not call
 `js_reset`, switch to another surface that depends on the same transport, or
-loop retries. A repeated failure, an unavailable authenticated composer, or
-another provider-readiness failure stops source preparation and is reported
-with no capsule prepared or transmitted and no external collaborator claims.
+loop retries. A repeated failure durably opens the claimed circuit before
+fallback. A later controller reports the saved failure without probing again
+until a different browser-host generation is observed.
+
+After a conclusive primary outage, an installed Ego skill and CLI may perform
+one read-only readiness attempt in one opaque, randomly named task space. It
+outputs only page, composer, authentication, and challenge status plus the
+preflight and numeric task-space identifiers. It does not output snapshots or
+conversation content. A missing command, connection, task space, page, or
+composer stops the branch without retry, installation, or a third transport.
+Authentication and verification transfer control to the user. Only explicit
+user confirmation permits taking the same task space back for one read-only
+recheck.
+
+The successful selected transport opens or claims the intended external
+collaborator conversation and verifies an authenticated composer from a fresh
+read-only page observation. It records the provider namespace, unique logical
+conversation identity, observed UI label, and any stable locator without
+routing by title or model label. It does not type, paste, attach, upload, or
+send during this gate. This zero-source-egress gate is outside the run ledger
+because no collaboration run exists yet.
+
+After run creation, an Ego selection is recorded as transport resource
+evidence with its preflight and task-space identifiers.
+`send_confirmed.transportKind` is `ego-browser`, but the conversation identity
+and canonical locator remain provider-level identities. The task-space ID is
+not a conversation identity or locator, so all transports and coordinators
+contend on the same provider-conversation leases.
+
+A healthy primary with a logged-out, challenged, rate-limited, or otherwise
+unready provider page does not authorize Ego fallback. User-owned
+authentication or a provider-readiness blocker stops before source preparation
+and is reported with no capsule prepared or transmitted and no external
+collaborator claims.
 
 Once an upload or send action might have run, this pre-run classification no
-longer applies. A closed transport then enters normal marker reconciliation:
-unknown delivery becomes `send_ambiguous`, and no resend is authorized.
+longer applies. No transport switch is allowed. A closed or failed transport
+enters normal marker reconciliation: unknown delivery becomes
+`send_ambiguous`, and no resend is authorized.
 
 ## Durable event ledger
 
@@ -61,6 +111,20 @@ the active snapshot, while outbound records remain permanent for the run.
 evidence bound to the active turn can enter review. Provider-terminal failure
 ends the run, and an ambiguity that cannot be conclusively reconciled requires
 a new explicitly authorized run.
+
+An Ego writer persists the reservation before invoking the browser, then uses
+separate bounded compose, submit, and observe commands. Composition proceeds
+only when the normalized ChatGPT composer is empty or already exactly equals
+the reserved task envelope. Ego's `fillInput` is forbidden for this
+contenteditable because it may append to a persisted draft. Any other non-empty
+draft is left untouched. Submission rechecks the exact envelope, one marker,
+no matching submitted user turn, and one enabled send control before one
+explicit click. Missing command output enters read-only marker reconciliation;
+it never authorizes another click. An immediate ChatGPT `/c/WEB:` path is
+provisional and cannot satisfy the provider-locator binding. Read-only
+observation must obtain the stable canonical conversation path or thread
+identifier before `send_confirmed`; otherwise the controller preserves the
+evidence without inventing a locator.
 
 New hardened runs set `outboundBindingVersion: 2` in `prepared` and bind the
 exact task envelope separately from the context artifact. Their first

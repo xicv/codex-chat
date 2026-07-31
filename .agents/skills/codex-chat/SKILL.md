@@ -1,6 +1,6 @@
 ---
 name: codex-chat
-description: Coordinate a browser-based external engineering collaborator while Codex remains the accountable lead and independent verifier. Use only when the user explicitly invokes $codex-chat or explicitly asks Codex to delegate a substantial coding, research, design, or review task through the Codex in-app browser without manual copy/paste.
+description: Coordinate a browser-based external engineering collaborator while Codex remains the accountable lead and independent verifier, using the Codex in-app Browser first and an installed Ego Browser only as a bounded pre-send fallback. Use only when the user explicitly invokes $codex-chat or explicitly asks Codex to delegate a substantial coding, research, design, or review task without manual copy/paste.
 ---
 
 # Codex Chat
@@ -20,46 +20,115 @@ Read [security.md](references/security.md) before the first outbound turn and [p
 
 ## Prove browser transport before source work
 
-Before selecting outbound files, packing, scanning, creating a run, or reserving a send, establish a zero-source-egress browser and provider-readiness gate:
+Before selecting outbound files, packing, scanning, creating a run, or
+reserving a send, establish a zero-source-egress browser and
+provider-readiness gate. The built-in Browser is the primary transport. Ego
+Browser is the only permitted alternative, and only when the primary is
+conclusively unavailable before any source or send action. Do not use Chrome,
+another browser surface, an API, or a manual copy/paste relay as another
+fallback.
 
-1. Follow the installed Browser skill to expose `node_repl/js` through tool
+1. Claim the app-wide transport probe before discovering or calling the
+   built-in Browser tool:
+
+   ```bash
+   node <skill>/scripts/codex-chat.mjs transport-gate --action claim
+   ```
+
+   Keep the returned `claimToken`. If `probeAllowed` is false, do not call
+   `node_repl/js`. A `same_host_generation_failed` result means the exact
+   browser-host generation already returned `Transport closed` and no verified
+   host restart has occurred; `desktop_generation_unsupported` or
+   `desktop_host_not_ready` means the primary cannot pass this gate. These are
+   conclusive primary unavailability classifications for this attempt. A
+   `probe_in_progress` result instead means another coordinator owns the
+   bounded primary health probe: report it and stop without starting Ego,
+   because a second browser writer could cross the active coordinator.
+2. Follow the installed Browser skill to expose `node_repl/js` through tool
    discovery. Run one no-I/O probe:
 
    ```js
    nodeRepl.write("CODEX_CHAT_TRANSPORT_OK")
    ```
-2. Initialize the supported browser runtime, acquire the intended browser
+3. Initialize the supported browser runtime, acquire the intended browser
    binding, read its complete documentation, and perform one supported
    read-only capability check.
-3. Open or claim the intended external collaborator conversation and use a
+4. Open or claim the intended external collaborator conversation and use a
    fresh read-only page observation to verify that its authenticated composer
    is ready. Record the provider namespace, a unique logical conversation
    identity, the observed UI label, and any stable locator that is already
    available. Do not route by the page title or model label. Do not type,
    paste, attach, upload, or send anything.
-4. Only after the provider-readiness check passes may source selection and
+5. After the read-only browser and provider checks succeed, close the claimed
+   transport circuit with:
+
+   ```bash
+   node <skill>/scripts/codex-chat.mjs transport-gate \
+     --action success \
+     --claim-token <claim-token>
+   ```
+6. Only after the provider-readiness check passes may source selection and
    capsule preparation begin.
 
-If `node_repl/js` returns `Transport closed` during this gate,
-reacquire `node_repl/js` through tool discovery once and repeat only the no-I/O
-probe. Do not call `js_reset`; reset uses the same closed transport. Do not
-switch to another `node_repl`-backed surface or loop retries. If the second
-probe fails, stop the browser-dependent branch before source preparation.
-Report the exact error, that no capsule was prepared or transmitted, and that
-there are no external collaborator claims. Recommend restarting the ChatGPT
-desktop app after other active tasks finish, then start or resume a task and
-run this gate again.
+If the built-in Browser skill or `node_repl/js` cannot be exposed, or its
+supported runtime or read-only capability cannot initialize, release an active
+claim without recording false health:
+
+```bash
+node <skill>/scripts/codex-chat.mjs transport-gate \
+  --action release \
+  --claim-token <claim-token>
+```
+
+This neutral release permits the Ego fallback without leaving a two-minute
+claim or marking the browser host healthy or failed.
+
+If `node_repl/js` returns `Transport closed` during this gate, reacquire
+`node_repl/js` through tool discovery once and repeat only the no-I/O probe. Do
+not call `js_reset`; reset uses the same closed transport. Do not switch to
+another `node_repl`-backed surface or loop retries. If the second probe fails,
+trip the claimed circuit:
+
+```bash
+node <skill>/scripts/codex-chat.mjs transport-gate \
+  --action failure \
+  --claim-token <claim-token>
+```
+
+This durable record suppresses every later probe from every coordinator sharing
+the same desktop login until `codex-code-mode-host` has a different process
+generation. Preserve the exact error and recorded ChatGPT and browser-host
+PIDs/start times so a full restart is verifiable rather than assumed. If Ego
+is unavailable, recommend quitting and reopening the app after other active
+tasks finish—a full restart of the ChatGPT desktop app—before a later primary
+attempt.
+
+After one of the conclusive primary-unavailability classifications above,
+read [ego-browser.md](references/ego-browser.md) and make its single read-only
+readiness attempt only when the installed Ego skill and CLI are available.
+The user owns Ego installation and every authentication or verification
+action. Do not install software, inspect credentials, or automate login. If
+Ego is unavailable or its one attempt fails, stop before source preparation
+and report the primary and Ego observations, that no capsule was prepared or
+transmitted, and that there are no external collaborator claims.
 
 If provider readiness fails for any other reason, stop before source
-preparation. Report the observed provider or authentication blocker,
-that no capsule was prepared or transmitted, and that there are no external
-collaborator claims. Authentication and verification challenges remain
-user-only actions.
+preparation. If the browser transport itself was proven healthy, complete the
+claimed circuit with `--action success` before reporting the observed provider
+or authentication blocker, that no capsule was prepared or transmitted, and
+that there are no external collaborator claims. Authentication and
+verification challenges remain user-only actions.
 
-This pre-send classification applies only when no upload or send UI action was
-invoked. If the transport closes during or after any action that might have
-submitted content, apply the ambiguity rules below, preserve the visible
-marker, and never infer non-delivery from the closed transport.
+Bind the selected transport for the complete run. Reuse its browser binding,
+conversation identity, and coordinator route; do not switch transports for a
+correction, timeout, disconnect, or changed UI. If the selected transport fails
+after selection, stop and preserve the current run state.
+
+This fallback classification applies only while no upload or send UI action has
+been invoked. If any action might have uploaded or submitted content, never
+start the Ego fallback. Apply the ambiguity rules below, preserve the visible
+marker, record or preserve `send_ambiguous`, and never infer non-delivery or
+resend through another transport.
 
 ## Prepare deterministic context
 
@@ -186,7 +255,13 @@ Use the English task structure in [task-template.md](references/task-template.md
 
 ## Submit at most once and reconcile ambiguity
 
-Prefer the Codex in-app browser using the user's existing authenticated session. Capability-probe the browser before depending on it. A native persisted-chat bridge may observe and reconcile a pending or confirmed turn when available. It may send a new outbound turn only after the prior turn is terminal, conclusively failed, or explicitly resolved by the user. Do not use cookies, private endpoints, browser-profile inspection, paid API fallback, or credit purchase.
+Use the one transport selected by the zero-egress gate: normally the Codex
+in-app Browser, or the bound Ego task space after a conclusive primary outage.
+A native persisted-chat bridge may observe and reconcile a pending or
+confirmed turn when available. It may send a new outbound turn only after the
+prior turn is terminal, conclusively failed, or explicitly resolved by the
+user. Do not switch browser transports after selection or use cookies, private
+endpoints, browser-profile inspection, paid API fallback, or credit purchase.
 
 Before sending, choose a unique visible outbound marker and record
 `send_reserved` with expected sequence/state, a permanent idempotency key, turn
@@ -201,6 +276,14 @@ locator, observation time, evidence class, and provider-message fingerprint
 when observable; confirmation leases that locator too. Idempotency keys and
 outbound markers are bound to their exact operation and cannot be reused for
 different data. Do not route by conversation title or model label.
+
+For the bound Ego transport, follow
+[ego-browser.md](references/ego-browser.md#submit-one-bound-turn) exactly. Keep
+the marker and task envelope durable outside each browser process; classify the
+existing composer before mutation; never use `fillInput` for ChatGPT's
+contenteditable or clear an unknown draft; and split exact composition,
+one explicit send-button click, and read-only observation into separate bounded
+heredocs. Missing command output triggers marker reconciliation, never resend.
 
 Once `send_confirmed` is durable:
 

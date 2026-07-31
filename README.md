@@ -43,7 +43,10 @@ rate-limited, disconnected, or silently changed by its provider.
 ```mermaid
 flowchart LR
     U["User goal and authority"] --> C["Codex lead"]
-    C --> P["Preflight and minimal context pack"]
+    C --> B{"Zero-egress browser gate"}
+    B -->|"Built-in Browser ready"| P["Preflight and minimal context pack"]
+    B -->|"Primary unavailable; Ego ready"| P
+    B -->|"No transport ready"| X["Stop before source work"]
     P --> S["Secret scan and SHA-256 binding"]
     S --> E["External collaborator"]
     E --> R["Bounded result envelope"]
@@ -57,8 +60,9 @@ flowchart LR
 
 The bundled CLI is a deterministic safety and evidence helper. It does not
 control the browser, inspect browser profiles, extract cookies, send messages,
-or call an API. Browser interaction remains a Codex host capability using the
-user's existing authenticated session.
+or call an API. Browser interaction uses the built-in Codex Browser by default
+or one isolated Ego task space after a conclusive pre-send primary outage. Both
+use a session authenticated by the user.
 
 ## Core rules
 
@@ -108,6 +112,10 @@ user's existing authenticated session.
     durable authority that assigns coordinator epochs, rejects stale fences,
     compares exact distributed run heads, and partitions bounded mailboxes by
     immutable route.
+14. **Choose one browser transport.** The built-in Browser is primary. Ego is
+    the only optional fallback, is checked once before source work, and remains
+    bound for the complete run. A possible upload or send permanently closes
+    the fallback window.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
@@ -147,12 +155,15 @@ for the distinct local and multi-host contracts.
 
 ## Requirements
 
-- Codex in the ChatGPT desktop app when browser collaboration is required
-- An authenticated browser session for the chosen external collaborator
+- Codex in the ChatGPT desktop app with the built-in Browser capability
+- An authenticated ChatGPT browser session for the external collaborator
+- Optional fallback: Ego Lite with its `ego-browser` skill and CLI already
+  installed and the user logged in
 - Node.js 22 or newer
 - [`gitleaks`](https://github.com/gitleaks/gitleaks) available on `PATH`
 
-Authentication, account selection, CAPTCHA, passkeys, passwords, and
+Ego is not installed or configured automatically. Installation,
+authentication, account selection, CAPTCHA, passkeys, passwords, and
 two-factor verification always remain human actions.
 
 ## Installation
@@ -352,6 +363,7 @@ directory. The CLI never replaces an existing artifact.
 | Command | Purpose |
 | --- | --- |
 | `preflight` | Validate source selection, state location, VCS metadata, and scanner availability |
+| `transport-gate` | Serialize primary-browser health probes, remember a closed host generation, neutrally release an unused claim, and verify that recovery changed the browser host before probing again |
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
 | `manifest` | Create and scan a typed `COLLAB_CONTEXT_MANIFEST_V2` provenance sidecar |
 | `delivery-receipt` | Create and scan immutable, digest-bound transport evidence without claiming model visibility |
@@ -373,11 +385,27 @@ automation.
 `codex-chat` tracks the controller, collaborator, transport, observed external
 model label, agentic allowance, upload capability, and API budget separately.
 
-- Browser transport and the intended provider's authenticated composer are
-  capability-probed before source selection or capsule creation. A repeated
-  pre-send `Transport closed` or provider-readiness failure stops before a
-  capsule is prepared; `js_reset` and another `node_repl`-backed surface are
-  not recovery paths.
+- The built-in Browser is capability-probed before source selection or capsule
+  creation. A repeated pre-send `Transport closed` opens its durable circuit;
+  `js_reset` and another `node_repl`-backed surface are not recovery paths.
+- A shared transport circuit serializes this no-source probe across local
+  coordinators. After a repeated `Transport closed`, later calls fail locally
+  without touching the closed transport until the browser-host PID/start
+  generation changes. This proves whether recovery actually restarted the
+  host; it cannot repair or guarantee the host implementation itself.
+- After a conclusive primary outage, an already-installed Ego Browser is the
+  only fallback. It gets one isolated task space and one read-only readiness
+  attempt. If login or verification is required, control returns to the user;
+  if Ego itself fails, the branch stops without retries or another surface.
+- Ego sends preserve the durable marker outside the browser command, reject
+  unknown persisted drafts, type only into an empty composer, and use one
+  verified send-button click. Compose, submit, and observe are separate, so
+  missing command output is reconciled read-only instead of retried.
+- A healthy primary with an unavailable authenticated composer is a provider
+  or user-authentication blocker, not a reason to switch browsers.
+- The selected transport is bound to the complete run. Any possible upload or
+  send closes the fallback window; ambiguous delivery is preserved and never
+  resent through the other browser.
 - A slow or disconnected response remains observe-only after submission.
 - A changed reset time or refreshed page never authorizes another send.
 - A conclusively failed provider turn ends the current run.
@@ -462,6 +490,12 @@ Security assumptions and exclusions are documented in
 - The MVP imports at most one existing text-file patch per result.
 - The CLI provides evidence and state management; it does not itself automate a
   browser.
+- Durable browser-host generation detection currently targets the macOS
+  ChatGPT desktop app. Other desktop platforms fail closed at this circuit
+  rather than guessing that a restart occurred.
+- Ego fallback depends on the separately installed Ego Lite app, skill, CLI,
+  and user-managed login. It does not repair the primary browser transport,
+  provide automatic authentication, or authorize a post-send retry.
 - The v2 manifest records typed representations, and the receipt command binds
   observed transport acceptance or rejection. Attachment upload, delta
   reconstruction, and proof of backend model visibility are not implemented;

@@ -162,9 +162,18 @@ Installation, login, account selection, CAPTCHA, passkeys, passwords, and
 two-factor verification remain user actions. A failed Ego attempt stops
 without retry or another surface.
 
+Because ChatGPT can restore an account-level draft into a fresh Ego task
+space, readiness classifies the composer before any source work without
+emitting its text. The fallback leaves an inherited draft and its original tab
+untouched, then gets one source-free attempt to verify a distinct empty tab.
+Failure preserves the draft and stops; it never asks the user to submit
+unknown content.
+
 The selected transport is immutable for the run. Ego task-space identifiers
-are transport observations, not provider conversation identities or locators;
-provider-level leases therefore continue to prevent two local coordinators
+and exact browser-target identifiers are transport observations, not provider
+conversation identities or locators. Every browser command reselects the
+bound target, so another tab or coordinator cannot silently redirect the run.
+Provider-level leases therefore continue to prevent two local coordinators
 from writing one conversation through different browser transports. An
 unavailable authenticated composer on a healthy primary is a provider or
 user-authentication blocker, not authorization to switch transports. Any
@@ -179,9 +188,9 @@ non-delivery.
 Ego composition is fail-closed around the inherited ChatGPT draft. The writer
 may type only into an empty composer or reuse the exact reserved envelope. It
 never uses append-prone `fillInput`, never clears an unknown draft, and never
-submits with Enter. A separate submit command verifies one enabled send control
-and performs one explicit click; a separate observer reconciles the durable
-marker if terminal output is missing.
+suggests submitting unknown content or submits with Enter. A separate submit
+command verifies one enabled send control and performs one explicit click; a
+separate observer reconciles the durable marker if terminal output is missing.
 
 After `send_confirmed`, absence of evidence is not evidence of failed delivery. Disconnect, timeout, idle, missing output, stale UI, and changed allowance reset time never permit resend.
 

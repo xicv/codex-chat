@@ -41,12 +41,15 @@ until a different browser-host generation is observed.
 After a conclusive primary outage, an installed Ego skill and CLI may perform
 one read-only readiness attempt in one opaque, randomly named task space. It
 outputs only page, composer, authentication, and challenge status plus the
-preflight and numeric task-space identifiers. It does not output snapshots or
-conversation content. A missing command, connection, task space, page, or
-composer stops the branch without retry, installation, or a third transport.
-Authentication and verification transfer control to the user. Only explicit
-user confirmation permits taking the same task space back for one read-only
-recheck.
+preflight, numeric task-space, and exact browser-target identifiers. It does
+not output snapshots, draft text, or conversation content. The attempt
+classifies the composer before source work. If ChatGPT restored an inherited
+draft, Ego preserves that tab and gets one source-free attempt to create and
+verify a distinct empty collaborator tab. A missing command, connection, task
+space, page, composer, distinct target, or empty composer stops the branch
+without retry, installation, or a third transport. Authentication and
+verification transfer control to the user. Only explicit user confirmation
+permits taking the same task space back for one read-only recheck.
 
 The successful selected transport opens or claims the intended external
 collaborator conversation and verifies an authenticated composer from a fresh
@@ -57,7 +60,10 @@ send during this gate. This zero-source-egress gate is outside the run ledger
 because no collaboration run exists yet.
 
 After run creation, an Ego selection is recorded as transport resource
-evidence with its preflight and task-space identifiers.
+evidence with its preflight, task-space, bound-target, and optional preserved
+draft-target identifiers. Every compose, submit, observe, correction, and
+cleanup command reselects the exact bound target and fails closed if it is
+absent; the current or newest tab is never a substitute.
 `send_confirmed.transportKind` is `ego-browser`, but the conversation identity
 and canonical locator remain provider-level identities. The task-space ID is
 not a conversation identity or locator, so all transports and coordinators
@@ -118,14 +124,14 @@ separate bounded compose, submit, and observe commands. Composition proceeds
 only when the normalized ChatGPT composer is empty or already exactly equals
 the reserved task envelope. Ego's `fillInput` is forbidden for this
 contenteditable because it may append to a persisted draft. Any other non-empty
-draft is left untouched. Submission rechecks the exact envelope, one marker,
-no matching submitted user turn, and one enabled send control before one
-explicit click. Missing command output enters read-only marker reconciliation;
-it never authorizes another click. An immediate ChatGPT `/c/WEB:` path is
-provisional and cannot satisfy the provider-locator binding. Read-only
-observation must obtain the stable canonical conversation path or thread
-identifier before `send_confirmed`; otherwise the controller preserves the
-evidence without inventing a locator.
+draft is left untouched and is never suggested for submission. Submission
+rechecks the exact envelope, one marker, no matching submitted user turn, and
+one enabled send control before one explicit click. Missing command output
+enters read-only marker reconciliation; it never authorizes another click. An
+immediate ChatGPT `/c/WEB:` path is provisional and cannot satisfy the
+provider-locator binding. Read-only observation must obtain the stable
+canonical conversation path or thread identifier before `send_confirmed`;
+otherwise the controller preserves the evidence without inventing a locator.
 
 New hardened runs set `outboundBindingVersion: 2` in `prepared` and bind the
 exact task envelope separately from the context artifact. Their first

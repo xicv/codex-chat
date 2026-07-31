@@ -112,6 +112,13 @@ Ego is unavailable or its one attempt fails, stop before source preparation
 and report the primary and Ego observations, that no capsule was prepared or
 transmitted, and that there are no external collaborator claims.
 
+Ego readiness must classify the composer before source work because ChatGPT
+can restore an account-level draft into a new task space. Preserve any
+inherited draft untouched and make at most one source-free attempt to open and
+verify a distinct empty tab. A passing fallback binds both the numeric task
+space and exact browser target for the entire run. Never ask the user to submit
+an unknown draft.
+
 If provider readiness fails for any other reason, stop before source
 preparation. If the browser transport itself was proven healthy, complete the
 claimed circuit with `--action success` before reporting the observed provider
@@ -281,9 +288,10 @@ For the bound Ego transport, follow
 [ego-browser.md](references/ego-browser.md#submit-one-bound-turn) exactly. Keep
 the marker and task envelope durable outside each browser process; classify the
 existing composer before mutation; never use `fillInput` for ChatGPT's
-contenteditable or clear an unknown draft; and split exact composition,
-one explicit send-button click, and read-only observation into separate bounded
-heredocs. Missing command output triggers marker reconciliation, never resend.
+contenteditable or clear an unknown draft; reselect the exact bound target
+before every command; and split exact composition, one explicit send-button
+click, and read-only observation into separate bounded heredocs. Missing
+command output triggers marker reconciliation, never resend.
 
 Once `send_confirmed` is durable:
 

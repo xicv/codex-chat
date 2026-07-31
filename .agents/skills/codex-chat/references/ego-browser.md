@@ -24,18 +24,45 @@ Before source selection, packing, scanning, run creation, or send reservation:
 
 ## One read-only readiness attempt
 
-Run one direct Ego heredoc. Keep the returned `preflightId` and numeric
-`taskSpaceId`. Adapt selectors only to the currently visible ChatGPT page; do
-not broaden the observation or print page contents.
+Run one direct Ego heredoc. Keep the returned `preflightId`, numeric
+`taskSpaceId`, and exact browser `targetId`. The attempt must classify the
+composer draft before source selection, packing, scanning, run creation, or
+send reservation. Adapt selectors only to the currently visible ChatGPT page;
+do not broaden the observation or print page contents.
+
+ChatGPT can restore an account-level draft into a newly created Ego task
+space. A new task space therefore does not prove an empty composer. The
+readiness attempt must:
+
+1. Open `https://chatgpt.com/`, record its exact target ID, and inspect the
+   authenticated composer without returning its text.
+2. Classify the composer as `empty`, `nonempty`, or `unsupported`. For a
+   ProseMirror composer, use the exact direct-`<p>` `textContent` joining rule
+   from [Submit one bound turn](#submit-one-bound-turn); do not use
+   `innerText`, trim, or print a digest of the draft.
+3. If it is empty, bind that target. If it is nonempty, leave the inherited
+   draft and its original tab untouched and make one source-free fresh-tab
+   attempt with the unique URL
+   `https://chatgpt.com/#codex-chat-${preflightId}`. Verify that the fresh
+   target ID differs from the inherited-draft target ID and that the fresh
+   target has an authenticated, challenge-free, empty supported composer.
+4. If the fresh target is not distinct and ready, stop before source work.
+   Preserve the inherited-draft tab. Do not retry, clear, overwrite, inspect,
+   or submit the draft.
 
 ```bash
 ego-browser nodejs <<'EOF'
 const preflightId = crypto.randomUUID()
 const task = await useOrCreateTaskSpace(`codex-chat-fallback-${preflightId}`)
-await openOrReuseTab('https://chatgpt.com/', { wait: true, timeout: 30 })
-const info = await pageInfo()
-const snapshot = await snapshotText()
-const readiness = await js(String.raw`
+const initialTab = await openOrReuseTab('https://chatgpt.com/', {
+  wait: true,
+  timeout: 30,
+})
+
+const inspectReadiness = async () => {
+  const info = await pageInfo()
+  const snapshot = await snapshotText()
+  const page = await js(String.raw`
 (() => {
   const visible = (element) => {
     if (!(element instanceof HTMLElement)) return false
@@ -54,7 +81,7 @@ const readiness = await js(String.raw`
     element.getAttribute('data-testid'),
     element.textContent,
   ].filter(Boolean).join(' ').toLowerCase()
-  const composer = nodes.some((element) =>
+  const composer = nodes.find((element) =>
     element.matches('textarea, [contenteditable="true"]') &&
     /prompt|message|composer|chat/.test(label(element))
   )
@@ -68,24 +95,91 @@ const readiness = await js(String.raw`
     'iframe[src*="captcha"], iframe[src*="challenge"], ' +
     '[id*="captcha"], [class*="captcha"], [data-testid*="challenge"]'
   )) || /captcha|verify you are human|security challenge/i.test(document.title)
+  let composerState = "unsupported"
+  if (composer instanceof HTMLTextAreaElement) {
+    composerState = composer.value.length === 0 ? "empty" : "nonempty"
+  } else if (composer instanceof HTMLElement) {
+    const children = [...composer.children]
+    if (children.every((child) => child.tagName === "P")) {
+      const composerText = children
+        .map((child) => child.textContent ?? "")
+        .join("\n")
+      composerState = composerText.length === 0 ? "empty" : "nonempty"
+    }
+  }
   return {
     origin: location.origin,
     path: location.pathname,
     pageReady: ['interactive', 'complete'].includes(document.readyState),
-    composerReady: composer,
+    composerReady: Boolean(composer),
+    composerState,
     accountUiPresent: profile,
-    authenticated: composer && !login && !challenge,
+    authenticated: Boolean(composer) && !login && !challenge,
     challengePresent: challenge,
   }
 })()
 `)
+  return {
+    ...page,
+    pageReady: Boolean(info && snapshot && page.pageReady),
+  }
+}
+
+const initialReadiness = await inspectReadiness()
+let readiness = initialReadiness
+let preservedDraftTargetId = null
+let candidateTargetId = initialTab.targetId
+let boundTargetId = null
+let failureReason = null
+
+if (initialReadiness.authenticated &&
+    initialReadiness.composerState === "nonempty") {
+  preservedDraftTargetId = initialTab.targetId
+  try {
+    const freshTab = await openOrReuseTab(
+      `https://chatgpt.com/#codex-chat-${preflightId}`,
+      { wait: true, timeout: 30 },
+    )
+    candidateTargetId = freshTab?.targetId ?? null
+    if (!candidateTargetId ||
+        candidateTargetId === initialTab.targetId) {
+      failureReason = "fresh_target_not_distinct"
+    } else {
+      await switchTab(candidateTargetId)
+      readiness = await inspectReadiness()
+      if (!readiness.pageReady ||
+          !readiness.authenticated ||
+          readiness.challengePresent ||
+          readiness.composerState !== "empty") {
+        failureReason = "fresh_target_not_ready_and_empty"
+      }
+    }
+  } catch {
+    failureReason = "fresh_target_unavailable"
+  }
+}
+
+const ready = !failureReason &&
+  readiness.pageReady &&
+  readiness.composerReady &&
+  readiness.authenticated &&
+  !readiness.challengePresent &&
+  readiness.composerState === "empty"
+if (ready) boundTargetId = candidateTargetId
+
 cliLog(JSON.stringify({
   preflightId,
   taskSpaceId: task.id,
+  targetId: boundTargetId,
+  candidateTargetId,
+  preservedDraftTargetId,
+  ready,
+  failureReason,
   providerOrigin: readiness.origin,
   providerPath: readiness.path,
-  pageReady: Boolean(info && snapshot && readiness.pageReady),
+  pageReady: readiness.pageReady,
   composerReady: readiness.composerReady,
+  composerState: readiness.composerState,
   accountUiPresent: readiness.accountUiPresent,
   authenticated: readiness.authenticated,
   challengePresent: readiness.challengePresent,
@@ -93,13 +187,20 @@ cliLog(JSON.stringify({
 EOF
 ```
 
-Do not print the snapshot or conversation content. The permitted output is the
-bounded readiness object above. Authentication readiness requires a ready
-composer with no visible login or challenge; `accountUiPresent` is supporting
-evidence because the provider does not render a labeled account control in
-every layout. Treat a false `pageReady`, a missing composer, or a command,
-connection, navigation, evaluation, or selector error as a failed Ego attempt
-and stop. Do not return to the built-in Browser or try a third surface.
+Do not print the snapshot or conversation content, including the draft. The
+permitted output is the bounded readiness object above. A passing result
+requires `ready`, `pageReady`, `composerReady`, `authenticated`,
+`composerState: "empty"`, no challenge, and an exact non-null `targetId`.
+`accountUiPresent` is supporting evidence because the provider does not render
+a labeled account control in every layout. A false required field, missing or
+unsupported composer, nonempty fresh composer, reused target, or bounded
+`failureReason` is a failed Ego attempt. Stop without source work. If terminal
+output is missing, reconcile only by listing task spaces once; never repeat the
+readiness action. Do not return to the built-in Browser or try a third surface.
+
+When an inherited draft prevents readiness, report only that an unrelated
+draft was preserved and that the external turn was not started. Never ask the
+user to submit an unknown draft.
 
 ## User-owned authentication
 
@@ -119,19 +220,23 @@ that login or verification is complete. Then call
 read-only readiness check in that same task space. If that one recheck fails,
 stop. Do not perform another handoff/recheck loop.
 
-If readiness fails without an authentication handoff and a numeric task-space
-ID was returned, close that task space in a dedicated heredoc before stopping.
+If readiness fails without an authentication handoff and no inherited draft
+was preserved, close the returned numeric task-space ID in a dedicated heredoc
+before stopping. If an inherited draft was preserved, keep the task space and
+its original tab for the user.
 
 ## Bind the selected transport
 
 After readiness succeeds:
 
-- Select `transportKind: "ego-browser"` for this run. Reuse the same numeric
-  task-space ID for the complete run, including corrections and response
-  observation.
+- Select `transportKind: "ego-browser"` for this run. Bind both `taskSpaceId`
+  and `targetId` to the complete run, including corrections and response
+  observation. Reuse the same numeric task-space ID for the complete run.
+  Never substitute the current, newest, or similarly titled tab.
 - After creating the durable run and before `send_reserved`, record a
   `resource_observation` for `transport` with the transport kind,
-  `preflightId`, `taskSpaceId`, source, observation time, and availability.
+  `preflightId`, `taskSpaceId`, `targetId`, optional
+  `preservedDraftTargetId`, source, observation time, and availability.
 - Keep `providerNamespace`, logical conversation identity, outbound marker,
   turn, and canonical provider locator transport-independent. The task-space ID
   is transport evidence, not a provider conversation identity or locator.
@@ -149,13 +254,22 @@ If an upload or send action might have run, record or preserve
 ## Submit one bound turn
 
 Create and persist the durable `send_reserved` marker, exact task envelope,
-payload digest, and bound task-space ID in the controller before invoking Ego.
-Do not generate the marker inside a browser heredoc. A missing terminal log must
-not make the delivery identity disappear with the browser process.
+payload digest, and bound task-space and target IDs in the controller before
+invoking Ego. Do not generate the marker inside a browser heredoc. A missing
+terminal log must not make the delivery identity disappear with the browser
+process.
 
 Use separate bounded heredocs for compose, submit, and observe. Each heredoc
 must take the already-persisted marker and task envelope as inputs and must use
-the same bound numeric task-space ID.
+the same bound numeric task-space ID. Activate that exact task space using the
+ownership-appropriate helper from the installed Ego skill:
+`useOrCreateTaskSpace(taskSpaceId)` normally, or
+`takeOverTaskSpace(taskSpaceId)` only after a confirmed user handoff. Before
+reading or mutating the page, reselect the bound target by listing tabs,
+requiring exactly the recorded `targetId`, and calling `switchTab(targetId)`.
+Perform this before every compose, submit, and observe command. If either
+binding is absent, stop; never create or fall back to another task space or
+tab.
 
 Read an envelope file with an ESM-safe dynamic import:
 
@@ -197,8 +311,10 @@ In the compose heredoc:
 4. If the normalized composer exactly equals the expected task envelope, reuse
    it without typing.
 5. For every other non-empty value, stop. Never clear or overwrite an unknown
-   draft, even when it appears to come from an earlier failed run. Ask the user
-   to preserve, submit, or discard that draft outside this run.
+   draft, even when it appears to come from an earlier failed run. Never ask
+   the user to submit an unknown draft: submitting it could send unrelated
+   content. Report that the bound collaborator tab diverged and leave it for
+   user inspection without creating another tab or run.
 6. Before leaving the compose heredoc, verify that the composer text exactly
    equals the expected task envelope, that the durable marker occurs once in
    it and zero times in submitted user turns, and that there is exactly one
@@ -236,11 +352,37 @@ every other or uncertain result as ambiguous.
 ## Finish the task space
 
 When the run becomes terminal and no user handoff is active, close the task
-space in a dedicated final Ego heredoc:
+space in a dedicated final Ego heredoc. If no inherited draft was preserved,
+close the whole task space:
 
 ```bash
 ego-browser nodejs <<'EOF'
 const taskSpaceId = 7 // replace with the bound numeric ID
-await completeTaskSpace(taskSpaceId, { keep: false })
+const completion = await completeTaskSpace(taskSpaceId, { keep: false })
+if (!completion.done) throw new Error("task space was not closed")
 EOF
 ```
+
+If `preservedDraftTargetId` is present, reselect and close only the bound
+collaborator tab by its exact `targetId`, then preserve the task space and
+original draft tab:
+
+```bash
+ego-browser nodejs <<'EOF'
+const taskSpaceId = 7 // replace with the bound numeric ID
+const targetId = "TARGET_ID" // replace with the bound collaborator target
+const preservedDraftTargetId = "PRESERVED_TARGET_ID"
+const task = await useOrCreateTaskSpace(taskSpaceId)
+if (task.id !== taskSpaceId) throw new Error("bound task space changed")
+const tabs = await listTabs()
+if (!tabs.some((tab) => tab.targetId === targetId) ||
+    !tabs.some((tab) => tab.targetId === preservedDraftTargetId)) {
+  throw new Error("bound cleanup targets changed")
+}
+await closeTab(targetId)
+const completion = await completeTaskSpace(taskSpaceId, { keep: true })
+if (!completion.done) throw new Error("task space was not preserved")
+EOF
+```
+
+Never close, clear, or submit the preserved draft tab.

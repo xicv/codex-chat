@@ -183,6 +183,46 @@ test("Ego fallback is one-shot, read-only, user-authenticated, and route-bound",
   assert.match(fallback, /completeTaskSpace\(taskSpaceId, \{ keep: false \}\)/);
 });
 
+test("Ego diverts inherited drafts before egress and binds one dedicated tab", async () => {
+  const fallback = await readFile(
+    path.resolve(
+      ".agents/skills/codex-chat/references/ego-browser.md",
+    ),
+    "utf8",
+  );
+
+  assert.match(
+    fallback,
+    /classify the\s+composer draft before source selection, packing, scanning, run creation, or\s+send reservation/,
+  );
+  assert.match(
+    fallback,
+    /leave the inherited\s+draft and its original tab untouched/,
+  );
+  assert.match(fallback, /one source-free fresh-tab\s+attempt/);
+  assert.match(
+    fallback,
+    /https:\/\/chatgpt\.com\/#codex-chat-\$\{preflightId\}/,
+  );
+  assert.match(
+    fallback,
+    /fresh\s+target ID differs from the inherited-draft target ID/,
+  );
+  assert.match(
+    fallback,
+    /[Bb]ind both `taskSpaceId`\s+and `targetId`[\s\S]*complete run/,
+  );
+  assert.match(
+    fallback,
+    /reselect the bound target[\s\S]*compose, submit, and observe/,
+  );
+  assert.match(fallback, /Never ask\s+the user to submit an unknown draft/);
+  assert.match(
+    fallback,
+    /close only the bound\s+collaborator tab[\s\S]*keep: true/,
+  );
+});
+
 test("Ego submission classifies stale drafts and preserves at-most-once reconciliation", async () => {
   const fallback = await readFile(
     path.resolve(

@@ -398,6 +398,11 @@ model label, agentic allowance, upload capability, and API budget separately.
   only fallback. It gets one isolated task space and one read-only readiness
   attempt. If login or verification is required, control returns to the user;
   if Ego itself fails, the branch stops without retries or another surface.
+- Ego readiness detects account-restored ChatGPT drafts before capsule work.
+  It preserves the inherited draft, tries one source-free distinct tab, and
+  proceeds only when that tab has an authenticated empty composer. The run is
+  then bound to both the task space and exact tab; every later command
+  reselects it, and cleanup preserves the unrelated draft tab.
 - Ego sends preserve the durable marker outside the browser command, reject
   unknown persisted drafts, and canonicalize multiline ProseMirror paragraphs
   from exact `textContent` instead of inflated `innerText`. Unexpected composer

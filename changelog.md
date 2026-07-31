@@ -48,6 +48,11 @@ that introduced each change; merge-only commits are omitted.
   capsule before discovering that no browser-backed submission is possible.
 - Provider navigation, authentication, or composer failures now stop before
   capsule preparation instead of after source has already been packaged.
+- Account-restored ChatGPT drafts in new Ego task spaces are now detected
+  during zero-egress readiness. The fallback preserves the draft, tries one
+  source-free distinct tab, binds the run to its exact target, and reselects
+  that target for compose, submit, observe, and cleanup instead of pausing
+  after capsule preparation or asking the user to submit unknown content.
 - Restart guidance is no longer trusted as an action: unchanged ChatGPT and
   browser-host generations keep the circuit open and prevent another
   `node_repl` call.

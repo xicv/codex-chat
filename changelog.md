@@ -30,6 +30,9 @@ that introduced each change; merge-only commits are omitted.
   with isolated task spaces, bounded readiness output, user-owned
   authentication, immutable per-run transport selection, and provider-level
   conversation leasing across transports.
+- A capability-protected Ego bootstrap lease that serializes the account-level
+  draft seam before a conversation identity exists, stores only a token digest,
+  rejects expired owners, and overlaps the durable conversation lease handoff.
 - A neutral transport-probe release that frees an unused primary claim without
   falsely marking the browser host healthy or failed.
 - A bounded external-response observation budget that permits durable local

@@ -155,7 +155,24 @@ without claiming success or failure. A concurrent `probe_in_progress` stops;
 it never starts a second browser writer.
 
 Ego Browser is the sole pre-send alternative after a conclusive primary
-outage. Its skill and CLI must already be installed. It receives one isolated
+outage. Its skill and CLI must already be installed. Before any Ego invocation,
+the controller acquires one local account-bootstrap lease. The record is
+digest-verified and private, stores only a SHA-256 capability digest, binds the
+immutable coordinator route and attempt, and increments a generation on
+every expired or released takeover. Exact owner, lease ID, and raw capability
+are all required to renew or release; a stale owner cannot mutate its
+replacement. The raw capability never enters Ego, browser state, collaboration
+context, or logs intended for the external collaborator.
+
+The lease is held until the logical conversation lease is durable, with those
+ownership periods overlapping, or until the stopped fallback has no browser
+operation in flight. An active foreign lease stops immediately without a
+second task space. This protects coordinators sharing one local transport-state
+directory. Its generation cannot fence an Ego invocation already in flight at
+expiry, so the owner renews immediately before every bounded browser command.
+It does not claim cross-host authority for a shared provider account.
+
+Ego receives one isolated
 task space and one read-only readiness attempt, emits no snapshot or
 conversation text, and never exposes browser profiles or credential state.
 Installation, login, account selection, CAPTCHA, passkeys, passwords, and

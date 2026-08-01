@@ -56,6 +56,14 @@ export const LIMITS_V2 = Object.freeze({
   }),
 });
 
+export const LIMITS_EGO_BOOTSTRAP_V1 = Object.freeze({
+  lease: Object.freeze({
+    minTtlMs: 60_000,
+    defaultTtlMs: 15 * 60 * 1000,
+    maxTtlMs: 60 * 60 * 1000,
+  }),
+});
+
 export const LIMITS_DISTRIBUTED_V1 = Object.freeze({
   lease: Object.freeze({
     minTtlMs: 1_000,

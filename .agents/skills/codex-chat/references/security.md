@@ -187,13 +187,19 @@ Failure preserves the draft and stops; it never asks the user to submit
 unknown content. Draft bytes are used only for local empty/nonempty/unsupported
 classification, never as input to composer, login, account, or challenge
 detection.
+The browser adapter submits only an exact bounded observation object to the
+local executable readiness core. Its strict schema excludes draft text and
+unknown fields, and its ordered guards fail closed on origin, page, composer,
+authentication, challenge, stage, and target-identity inconsistencies.
 
 The selected transport is immutable for the run. Ego task-space identifiers
 and exact browser-target identifiers are transport observations, not provider
 conversation identities or locators. Every browser command reselects the
 bound target, so another tab or coordinator cannot silently redirect the run.
-Final cleanup independently verifies that the collaborator target differs from
-the preserved-draft target before closing anything.
+Final cleanup uses an executable, strict-schema plan before closing anything.
+The planner emits no mutation when target identities collide, required targets
+are missing, live identities are duplicated, or whole-space cleanup discovers
+an additional target.
 Provider-level leases therefore continue to prevent two local coordinators
 from writing one conversation through different browser transports. An
 unavailable authenticated composer on a healthy primary is a provider or

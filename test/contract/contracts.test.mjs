@@ -193,7 +193,8 @@ test("Ego fallback is one-shot, read-only, user-authenticated, and route-bound",
     fallback,
     /If Ego fails after selection, stop[\s\S]*Do not return to the built-in Browser or try a third surface/,
   );
-  assert.match(fallback, /completeTaskSpace\(taskSpaceId, \{ keep: false \}\)/);
+  assert.match(fallback, /completeTaskSpace\(taskSpaceId/);
+  assert.match(fallback, /keep: plan\.keepTaskSpace/);
 });
 
 test("Ego diverts inherited drafts before egress and binds one dedicated tab", async () => {
@@ -206,25 +207,22 @@ test("Ego diverts inherited drafts before egress and binds one dedicated tab", a
   const fieldLabelStart = fallback.indexOf("const fieldLabel =");
   const controlsStart = fallback.indexOf("const controls =", fieldLabelStart);
   const cleanupStart = fallback.indexOf("## Finish the task space");
-  const distinctCleanupCheck = fallback.indexOf(
-    "targetId === preservedDraftTargetId",
-    cleanupStart,
-  );
+  const cleanupPlan = fallback.indexOf("planEgoCleanup({", cleanupStart);
   const closeBoundTarget = fallback.indexOf(
-    "await closeTab(targetId)",
+    "await closeTab(closeTargetId)",
     cleanupStart,
   );
 
   assert.notEqual(fieldLabelStart, -1);
   assert.notEqual(controlsStart, -1);
   assert.notEqual(cleanupStart, -1);
-  assert.notEqual(distinctCleanupCheck, -1);
+  assert.notEqual(cleanupPlan, -1);
   assert.notEqual(closeBoundTarget, -1);
   assert.doesNotMatch(
     fallback.slice(fieldLabelStart, controlsStart),
     /textContent/,
   );
-  assert.ok(distinctCleanupCheck < closeBoundTarget);
+  assert.ok(cleanupPlan < closeBoundTarget);
 
   assert.match(
     fallback,
@@ -260,12 +258,43 @@ test("Ego diverts inherited drafts before egress and binds one dedicated tab", a
   assert.match(fallback, /const profile = controls\.some/);
   assert.match(
     fallback,
-    /close only the bound\s+collaborator tab[\s\S]*keep: true/,
+    /close only the bound\s+collaborator tab[\s\S]*plan\.keepTaskSpace/,
   );
-  assert.match(fallback, /targetId === preservedDraftTargetId/);
-  assert.match(
-    fallback,
-    /collaborator and preserved-draft targets are not distinct/,
+  assert.match(fallback, /plan\.closeTargetIds/);
+});
+
+test("Ego executes the local readiness and cleanup decision core", async () => {
+  const fallback = await readFile(
+    path.resolve(
+      ".agents/skills/codex-chat/references/ego-browser.md",
+    ),
+    "utf8",
+  );
+  const readinessStart = fallback.indexOf("## One read-only readiness attempt");
+  const authenticationStart = fallback.indexOf("## User-owned authentication");
+  const cleanupStart = fallback.indexOf("## Finish the task space");
+  const decideCall = fallback.indexOf("decideEgoReadiness({", readinessStart);
+  const cleanupCall = fallback.indexOf("planEgoCleanup({", cleanupStart);
+  const closeCall = fallback.indexOf("await closeTab(", cleanupStart);
+  const completeCall = fallback.indexOf(
+    "await completeTaskSpace(",
+    cleanupStart,
+  );
+
+  assert.notEqual(readinessStart, -1);
+  assert.notEqual(authenticationStart, -1);
+  assert.notEqual(cleanupStart, -1);
+  assert.notEqual(decideCall, -1);
+  assert.notEqual(cleanupCall, -1);
+  assert.notEqual(closeCall, -1);
+  assert.notEqual(completeCall, -1);
+  assert.match(fallback, /process\.env\.CODEX_CHAT_SKILL_DIR/);
+  assert.match(fallback, /ego-readiness\.mjs/);
+  assert.ok(cleanupCall < closeCall);
+  assert.ok(cleanupCall < completeCall);
+  assert.doesNotMatch(
+    fallback.slice(readinessStart, authenticationStart),
+    /const ready = !failureReason/,
   );
 });
 

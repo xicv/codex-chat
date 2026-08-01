@@ -117,7 +117,9 @@ use a session authenticated by the user.
     bound for the complete run. A possible upload or send permanently closes
     the fallback window. A capability-protected local bootstrap lease prevents
     concurrent coordinators from entering Ego's account-level draft seam before
-    the normal conversation lease exists.
+    the normal conversation lease exists. Ego's bounded browser observations
+    and live cleanup identities are evaluated by a strict local executable
+    decision core, not duplicated prose-only browser branches.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
@@ -407,7 +409,9 @@ model label, agentic allowance, upload capability, and API budget separately.
   It preserves the inherited draft, tries one source-free distinct tab, and
   proceeds only when that tab has an authenticated empty composer. The run is
   then bound to both the task space and exact tab; every later command
-  reselects it, and cleanup preserves the unrelated draft tab.
+  reselects it, and cleanup preserves the unrelated draft tab. A strict local
+  module rejects unknown readiness fields and draft bytes, decides every
+  readiness state, and plans cleanup before any tab or task-space mutation.
 - Ego sends preserve the durable marker outside the browser command, reject
   unknown persisted drafts, and canonicalize multiline ProseMirror paragraphs
   from exact `textContent` instead of inflated `innerText`. Unexpected composer

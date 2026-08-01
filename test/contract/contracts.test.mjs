@@ -10,6 +10,7 @@ import {
 } from "../../.agents/skills/codex-chat/scripts/lib/state.mjs";
 import { runCli, tempDir, writeFixture } from "../helpers.mjs";
 import {
+  LIMITS_EGO_BOOTSTRAP_V1,
   LIMITS_DISTRIBUTED_V1,
   LIMITS_V1,
   LIMITS_V2,
@@ -136,6 +137,18 @@ test("Ego fallback is one-shot, read-only, user-authenticated, and route-bound",
   );
 
   assert.match(fallback, /Ego Browser is a pre-send fallback/);
+  const leaseAcquire = fallback.indexOf("--action acquire");
+  const firstEgoInvocation = fallback.indexOf("ego-browser nodejs <<'EOF'");
+  assert.notEqual(leaseAcquire, -1);
+  assert.notEqual(firstEgoInvocation, -1);
+  assert.ok(leaseAcquire < firstEgoInvocation);
+  assert.match(fallback, /If `acquired` is\s+false, stop before invoking Ego/);
+  assert.match(fallback, /never persist its raw[\s\S]*pass `leaseToken` to Ego/);
+  assert.match(
+    fallback,
+    /Hold the\s+bootstrap lease[\s\S]*has durably acquired the normal logical\s+conversation lease/,
+  );
+  assert.match(fallback, /--action release/);
   assert.match(
     fallback,
     /only after the\s+built-in Browser is conclusively unavailable/,
@@ -474,6 +487,18 @@ test("versioned implementation limits agree with normative schemas", async () =>
   assert.equal(LIMITS_V1.ledger.maxEventsPerRun, 1024);
   assert.equal(LIMITS_V1.ledger.completionEventReserve, 32);
   assert.equal(LIMITS_V1.ledger.resourceObservationCoalesceMs, 5_000);
+  assert.deepEqual(LIMITS_EGO_BOOTSTRAP_V1.lease, {
+    minTtlMs: 60_000,
+    defaultTtlMs: 900_000,
+    maxTtlMs: 3_600_000,
+  });
+  const limitsReference = await readFile(
+    path.resolve(".agents/skills/codex-chat/references/limits.md"),
+    "utf8",
+  );
+  assert.match(limitsReference, /Minimum lease TTL \| 60,000 ms/);
+  assert.match(limitsReference, /Default lease TTL \| 900,000 ms/);
+  assert.match(limitsReference, /Maximum lease TTL \| 3,600,000 ms/);
   const distributedRequestSchema = JSON.parse(
     await readFile(
       path.join(
@@ -573,6 +598,7 @@ test("CLI exposes machine-readable help and version without repository context",
     [
       "preflight",
       "transport-gate",
+      "ego-bootstrap-lease",
       "pack",
       "manifest",
       "delivery-receipt",

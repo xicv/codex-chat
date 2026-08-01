@@ -65,6 +65,17 @@ Delivery receipt v2 uses these fixed limits:
 These limits bound one immutable representation observation per receipt. They
 do not grant transport upload capacity or establish model visibility.
 
+Local Ego bootstrap coordination uses these fixed lease limits:
+
+| Area | Limit |
+| --- | ---: |
+| Minimum lease TTL | 60,000 ms |
+| Default lease TTL | 900,000 ms |
+| Maximum lease TTL | 3,600,000 ms |
+
+The owner renews immediately before each bounded Ego invocation. The maximum
+does not make the lease a cross-host fencing authority.
+
 Distributed coordination v1 uses these fixed ceilings:
 
 | Area | Limit |

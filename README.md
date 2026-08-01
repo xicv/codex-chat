@@ -115,7 +115,9 @@ use a session authenticated by the user.
 14. **Choose one browser transport.** The built-in Browser is primary. Ego is
     the only optional fallback, is checked once before source work, and remains
     bound for the complete run. A possible upload or send permanently closes
-    the fallback window.
+    the fallback window. A capability-protected local bootstrap lease prevents
+    concurrent coordinators from entering Ego's account-level draft seam before
+    the normal conversation lease exists.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
@@ -139,7 +141,10 @@ Concurrent work is isolated by immutable workspace, coordinator, run, work
 unit, agent, conversation, and turn identities. Each run has its own
 compare-and-swap ledger; hardened turns lease the provider conversation across
 all runs in one state directory; and overlapping writers serialize behind
-target-specific locks.
+target-specific locks. Before an Ego run has a conversation identity, a
+separate expiring bootstrap lease assigns the shared local browser profile to
+one coordinator. Its hashed capability and takeover generation reject stale
+renewal or release, and ownership overlaps the later conversation lease.
 
 When participants span hosts, the opt-in `control-serve` process becomes one
 authoritative coordination seam. It persists monotonic coordinator epochs and

@@ -19,8 +19,78 @@ Before source selection, packing, scanning, run creation, or send reservation:
    do not transfer credential material. The user owns installation, login,
    account selection, CAPTCHA, passkeys, passwords, and two-factor
    verification.
-4. Create one isolated task space with an opaque random preflight identity.
+4. After acquiring bootstrap ownership below, create one isolated task space
+   with an opaque random preflight identity.
    Never put repository paths, source, task text, or user data in its name.
+
+## Acquire bootstrap ownership
+
+Before the first `ego-browser` invocation, acquire the single local lease for
+the ChatGPT account-level draft seam. Use the immutable route that this
+coordinator has already chosen; `attempt-id` is a fresh ID for this pre-run
+fallback attempt:
+
+```bash
+node <skill>/scripts/codex-chat.mjs ego-bootstrap-lease \
+  --action acquire \
+  --workspace-id <workspace-id> \
+  --coordinator-id <coordinator-id> \
+  --work-unit-id <work-unit-id> \
+  --agent-id <agent-id> \
+  --attempt-id <attempt-id>
+```
+
+Keep the returned `leaseId`, `leaseToken`, `generation`, and `expiresAt` in
+the local controller. The token is a local capability: never persist its raw
+value in the lease record, pass `leaseToken` to Ego or another browser, place
+it in the collaboration capsule, or quote it in a report. If `acquired` is
+false, stop before invoking Ego, creating a task space, selecting source, or
+waiting for the other owner. Do not change state directories or identities to
+bypass `bootstrap_in_progress`.
+
+The default lease lasts fifteen minutes. Renew the exact capability before it
+expires whenever readiness, user handoff, or source preparation continues:
+
+```bash
+node <skill>/scripts/codex-chat.mjs ego-bootstrap-lease \
+  --action renew \
+  --workspace-id <workspace-id> \
+  --coordinator-id <coordinator-id> \
+  --work-unit-id <work-unit-id> \
+  --agent-id <agent-id> \
+  --attempt-id <attempt-id> \
+  --lease-id <lease-id> \
+  --lease-token <lease-token>
+```
+
+Before handing a task space to the user for authentication, renew with
+`--ttl-ms 3600000`. If renewal later reports expiry or an ownership mismatch,
+do not take the task space back or perform another Ego action. Hold the
+bootstrap lease until `send_reserved` has durably acquired the normal logical
+conversation lease. That ordering ensures one ownership mechanism is active
+before the other is released.
+
+On any earlier stop, first finish any permitted task-space cleanup, then
+release the exact capability only after no Ego command remains in flight:
+
+```bash
+node <skill>/scripts/codex-chat.mjs ego-bootstrap-lease \
+  --action release \
+  --workspace-id <workspace-id> \
+  --coordinator-id <coordinator-id> \
+  --work-unit-id <work-unit-id> \
+  --agent-id <agent-id> \
+  --attempt-id <attempt-id> \
+  --lease-id <lease-id> \
+  --lease-token <lease-token>
+```
+
+Release the same way immediately after the conversation lease is durable.
+This lease coordinates cooperative processes sharing one local transport-state
+directory; its generation records takeovers but does not fence an Ego command
+that was already in flight when a lease expired. Renew immediately before each
+bounded Ego invocation. This is not a cross-host authority; hosts sharing an
+account still need an externally authoritative bootstrap owner.
 
 ## One read-only readiness attempt
 

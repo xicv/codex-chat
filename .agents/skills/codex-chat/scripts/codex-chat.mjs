@@ -26,6 +26,7 @@ import {
   revalidateActiveTerminalCapture,
 } from "./lib/terminal-capture.mjs";
 import { transportGate } from "./lib/transport-gate.mjs";
+import { egoBootstrapLease } from "./lib/ego-bootstrap-lease.mjs";
 import { runVerification } from "./lib/verify.mjs";
 
 const CLI_VERSION = "0.1.0";
@@ -33,6 +34,7 @@ const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const COMMANDS = [
   "preflight",
   "transport-gate",
+  "ego-bootstrap-lease",
   "pack",
   "manifest",
   "delivery-receipt",
@@ -285,6 +287,28 @@ async function main() {
         action: required(options, "action"),
         claimToken: options["claim-token"] ?? null,
         transportStateDir,
+      }),
+    );
+    return;
+  }
+  if (command === "ego-bootstrap-lease") {
+    emitSuccess(
+      command,
+      await egoBootstrapLease({
+        action: required(options, "action"),
+        transportStateDir,
+        owner: {
+          workspaceId: required(options, "workspace-id"),
+          coordinatorId: required(options, "coordinator-id"),
+          workUnitId: required(options, "work-unit-id"),
+          agentId: required(options, "agent-id"),
+          attemptId: required(options, "attempt-id"),
+        },
+        leaseId: options["lease-id"] ?? null,
+        leaseToken: options["lease-token"] ?? null,
+        ...(options["ttl-ms"] === undefined
+          ? {}
+          : { ttlMs: Number(options["ttl-ms"]) }),
       }),
     );
     return;

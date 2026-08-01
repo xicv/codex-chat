@@ -39,7 +39,26 @@ fallback. A later controller reports the saved failure without probing again
 until a different browser-host generation is observed.
 
 After a conclusive primary outage, an installed Ego skill and CLI may perform
-one read-only readiness attempt in one opaque, randomly named task space. It
+one read-only readiness attempt in one opaque, randomly named task space. Before
+that first Ego invocation, the coordinator acquires a digest-verified local
+lease on the fixed `(chatgpt.com, ego-default, ego-browser)` bootstrap
+descriptor. The lease binds immutable workspace, coordinator, work-unit,
+agent, and attempt identities to a random capability whose raw token is never
+persisted. A file lock serializes acquisition; a bounded expiry and monotonic
+generation permit crash recovery, while the exact lease ID and capability stop
+a stale owner from renewing or releasing its replacement.
+
+An unexpired lease owned by another coordinator stops the fallback before any
+task-space or source action. The owner renews the lease through readiness and
+source preparation. It releases only after `send_reserved` has durably
+acquired the ordinary logical-conversation lease, or after a stopped attempt
+has no Ego operation in flight. Thus the handoff overlaps ownership instead of
+leaving an unowned interval. The owner renews immediately before every bounded
+Ego invocation. The generation records takeovers but cannot fence an invocation
+already in flight when expiry occurs. This bootstrap lease is cooperative
+single-host coordination, not distributed fencing across machines.
+
+The readiness attempt
 outputs only page, composer, authentication, and challenge status plus the
 preflight, numeric task-space, and exact browser-target identifiers. It does
 not output snapshots, draft text, or conversation content. The attempt

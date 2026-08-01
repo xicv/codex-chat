@@ -104,8 +104,24 @@ tasks finish—a full restart of the ChatGPT desktop app—before a later primar
 attempt.
 
 After one of the conclusive primary-unavailability classifications above,
-read [ego-browser.md](references/ego-browser.md) and make its single read-only
-readiness attempt only when the installed Ego skill and CLI are available.
+read [ego-browser.md](references/ego-browser.md). Before invoking Ego, acquire
+the local Ego bootstrap lease described there using the already-chosen
+workspace, coordinator, work-unit, agent, and attempt identities. If another
+coordinator owns the unexpired lease, stop without waiting, retrying, creating
+a task space, or preparing source. The lease capability remains local to the
+controller and is never passed into a browser command or external context.
+Only its owner may renew or release it.
+
+Hold that lease through the single read-only readiness attempt, run creation,
+and source preparation. Release it only after the normal provider-conversation
+lease is durably acquired by `send_reserved`, or after the Ego attempt has
+stopped and no Ego browser operation remains in flight. This closes the
+pre-run interval where no conversation identity exists yet. Renew before the
+lease expires; an expired or mismatched capability stops the attempt instead
+of authorizing another browser action.
+
+Make the single read-only readiness attempt only when the installed Ego skill
+and CLI are available.
 The user owns Ego installation and every authentication or verification
 action. Do not install software, inspect credentials, or automate login. If
 Ego is unavailable or its one attempt fails, stop before source preparation

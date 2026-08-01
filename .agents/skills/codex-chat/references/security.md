@@ -167,12 +167,16 @@ space, readiness classifies the composer before any source work without
 emitting its text. The fallback leaves an inherited draft and its original tab
 untouched, then gets one source-free attempt to verify a distinct empty tab.
 Failure preserves the draft and stops; it never asks the user to submit
-unknown content.
+unknown content. Draft bytes are used only for local empty/nonempty/unsupported
+classification, never as input to composer, login, account, or challenge
+detection.
 
 The selected transport is immutable for the run. Ego task-space identifiers
 and exact browser-target identifiers are transport observations, not provider
 conversation identities or locators. Every browser command reselects the
 bound target, so another tab or coordinator cannot silently redirect the run.
+Final cleanup independently verifies that the collaborator target differs from
+the preserved-draft target before closing anything.
 Provider-level leases therefore continue to prevent two local coordinators
 from writing one conversation through different browser transports. An
 unavailable authenticated composer on a healthy primary is a provider or

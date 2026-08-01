@@ -76,20 +76,31 @@ const inspectReadiness = async () => {
   const nodes = [...document.querySelectorAll(
     'button, a, textarea, [contenteditable="true"]'
   )].filter(visible)
-  const label = (element) => [
+  const controlLabel = (element) => [
     element.getAttribute('aria-label'),
     element.getAttribute('data-testid'),
     element.textContent,
   ].filter(Boolean).join(' ').toLowerCase()
+  const fieldLabel = (element) => [
+    element.getAttribute('aria-label'),
+    element.getAttribute('data-testid'),
+    element.getAttribute('placeholder'),
+    element.getAttribute('data-placeholder'),
+    element.getAttribute('id'),
+    element.getAttribute('name'),
+  ].filter(Boolean).join(' ').toLowerCase()
+  const controls = nodes.filter((element) =>
+    element.matches('button, a')
+  )
   const composer = nodes.find((element) =>
     element.matches('textarea, [contenteditable="true"]') &&
-    /prompt|message|composer|chat/.test(label(element))
+    /prompt|message|composer|chat/.test(fieldLabel(element))
   )
-  const login = nodes.some((element) =>
-    /log in|sign in/.test(label(element))
+  const login = controls.some((element) =>
+    /log in|sign in/.test(controlLabel(element))
   )
-  const profile = nodes.some((element) =>
-    /profile|account|user menu/.test(label(element))
+  const profile = controls.some((element) =>
+    /profile|account|user menu/.test(controlLabel(element))
   )
   const challenge = Boolean(document.querySelector(
     'iframe[src*="captcha"], iframe[src*="challenge"], ' +
@@ -191,6 +202,9 @@ Do not print the snapshot or conversation content, including the draft. The
 permitted output is the bounded readiness object above. A passing result
 requires `ready`, `pageReady`, `composerReady`, `authenticated`,
 `composerState: "empty"`, no challenge, and an exact non-null `targetId`.
+Never use unknown draft text to identify the composer, login, account, or
+challenge state. Draft text may be read only for the local `empty`, `nonempty`,
+or `unsupported` classification and must never be returned.
 `accountUiPresent` is supporting evidence because the provider does not render
 a labeled account control in every layout. A false required field, missing or
 unsupported composer, nonempty fresh composer, reused target, or bounded
@@ -372,6 +386,9 @@ ego-browser nodejs <<'EOF'
 const taskSpaceId = 7 // replace with the bound numeric ID
 const targetId = "TARGET_ID" // replace with the bound collaborator target
 const preservedDraftTargetId = "PRESERVED_TARGET_ID"
+if (targetId === preservedDraftTargetId) {
+  throw new Error("collaborator and preserved-draft targets are not distinct")
+}
 const task = await useOrCreateTaskSpace(taskSpaceId)
 if (task.id !== taskSpaceId) throw new Error("bound task space changed")
 const tabs = await listTabs()

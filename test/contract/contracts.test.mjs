@@ -190,6 +190,28 @@ test("Ego diverts inherited drafts before egress and binds one dedicated tab", a
     ),
     "utf8",
   );
+  const fieldLabelStart = fallback.indexOf("const fieldLabel =");
+  const controlsStart = fallback.indexOf("const controls =", fieldLabelStart);
+  const cleanupStart = fallback.indexOf("## Finish the task space");
+  const distinctCleanupCheck = fallback.indexOf(
+    "targetId === preservedDraftTargetId",
+    cleanupStart,
+  );
+  const closeBoundTarget = fallback.indexOf(
+    "await closeTab(targetId)",
+    cleanupStart,
+  );
+
+  assert.notEqual(fieldLabelStart, -1);
+  assert.notEqual(controlsStart, -1);
+  assert.notEqual(cleanupStart, -1);
+  assert.notEqual(distinctCleanupCheck, -1);
+  assert.notEqual(closeBoundTarget, -1);
+  assert.doesNotMatch(
+    fallback.slice(fieldLabelStart, controlsStart),
+    /textContent/,
+  );
+  assert.ok(distinctCleanupCheck < closeBoundTarget);
 
   assert.match(
     fallback,
@@ -219,7 +241,18 @@ test("Ego diverts inherited drafts before egress and binds one dedicated tab", a
   assert.match(fallback, /Never ask\s+the user to submit an unknown draft/);
   assert.match(
     fallback,
+    /Never use unknown draft text to identify the composer, login, account, or\s+challenge state/,
+  );
+  assert.match(fallback, /const login = controls\.some/);
+  assert.match(fallback, /const profile = controls\.some/);
+  assert.match(
+    fallback,
     /close only the bound\s+collaborator tab[\s\S]*keep: true/,
+  );
+  assert.match(fallback, /targetId === preservedDraftTargetId/);
+  assert.match(
+    fallback,
+    /collaborator and preserved-draft targets are not distinct/,
   );
 });
 

@@ -53,6 +53,8 @@ that introduced each change; merge-only commits are omitted.
   source-free distinct tab, binds the run to its exact target, and reselects
   that target for compose, submit, observe, and cleanup instead of pausing
   after capsule preparation or asking the user to submit unknown content.
+  Unknown draft text no longer participates in login/account control detection,
+  and cleanup reasserts distinct collaborator/draft targets before closing one.
 - Restart guidance is no longer trusted as an action: unchanged ChatGPT and
   browser-host generations keep the circuit open and prevent another
   `node_repl` call.

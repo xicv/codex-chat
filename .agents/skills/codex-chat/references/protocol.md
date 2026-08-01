@@ -51,6 +51,11 @@ without retry, installation, or a third transport. Authentication and
 verification transfer control to the user. Only explicit user confirmation
 permits taking the same task space back for one read-only recheck.
 
+Readiness uses field metadata to locate the composer and control metadata/text
+to locate login and account controls. Unknown composer text participates only
+in the bounded empty/nonempty/unsupported classification; it cannot influence
+authentication, account, challenge, or composer-element detection.
+
 The successful selected transport opens or claims the intended external
 collaborator conversation and verifies an authenticated composer from a fresh
 read-only page observation. It records the provider namespace, unique logical
@@ -63,7 +68,9 @@ After run creation, an Ego selection is recorded as transport resource
 evidence with its preflight, task-space, bound-target, and optional preserved
 draft-target identifiers. Every compose, submit, observe, correction, and
 cleanup command reselects the exact bound target and fails closed if it is
-absent; the current or newest tab is never a substitute.
+absent; the current or newest tab is never a substitute. Cleanup reasserts
+that the collaborator and preserved-draft target IDs are distinct before it
+closes either target.
 `send_confirmed.transportKind` is `ego-browser`, but the conversation identity
 and canonical locator remain provider-level identities. The task-space ID is
 not a conversation identity or locator, so all transports and coordinators

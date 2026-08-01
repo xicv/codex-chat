@@ -33,6 +33,9 @@ that introduced each change; merge-only commits are omitted.
 - A capability-protected Ego bootstrap lease that serializes the account-level
   draft seam before a conversation identity exists, stores only a token digest,
   rejects expired owners, and overlaps the durable conversation lease handoff.
+- An executable Ego readiness and cleanup decision core with strict bounded
+  schemas, ordered fail-closed guards, draft-byte exclusion, coherent target
+  identities, and mutation-free cleanup rejection.
 - A neutral transport-probe release that frees an unused primary claim without
   falsely marking the browser host healthy or failed.
 - A bounded external-response observation budget that permits durable local
@@ -75,6 +78,9 @@ that introduced each change; merge-only commits are omitted.
 - Ego compose scripts now load persisted envelopes with an ESM-safe dynamic
   import, avoiding the pre-browser module-format failure caused by mixing
   CommonJS `require` with top-level `await`.
+- Ego readiness no longer relies on duplicated inline decision branches that
+  could classify a missing composer as ready, and cleanup now plans against
+  the live target set before closing a tab or task space.
 - Quiet mailbox polling no longer exhausts the control plane's permanent
   idempotency capacity, and a claim can now fail closed if another consumer
   wins after the availability probe.

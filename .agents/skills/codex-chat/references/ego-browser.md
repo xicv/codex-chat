@@ -120,8 +120,26 @@ readiness attempt must:
    Preserve the inherited-draft tab. Do not retry, clear, overwrite, inspect,
    or submit the draft.
 
+Replace `<skill>` below with the exact current installed `codex-chat` skill
+directory. The browser adapter returns only bounded observations to the local
+`ego-readiness.mjs` decision core. That module rejects unknown fields and
+never accepts draft bytes; do not reproduce or modify its decisions inline.
+
 ```bash
-ego-browser nodejs <<'EOF'
+CODEX_CHAT_SKILL_DIR="<skill>" ego-browser nodejs <<'EOF'
+const skillDir = process.env.CODEX_CHAT_SKILL_DIR
+if (!skillDir) throw new Error("codex-chat skill directory is required")
+const { join } = await import("node:path")
+const { pathToFileURL } = await import("node:url")
+const readinessModulePath = join(
+  skillDir,
+  "scripts",
+  "lib",
+  "ego-readiness.mjs",
+)
+const { decideEgoReadiness } = await import(
+  pathToFileURL(readinessModulePath).href
+)
 const preflightId = crypto.randomUUID()
 const task = await useOrCreateTaskSpace(`codex-chat-fallback-${preflightId}`)
 const initialTab = await openOrReuseTab('https://chatgpt.com/', {
@@ -189,13 +207,13 @@ const inspectReadiness = async () => {
     }
   }
   return {
-    origin: location.origin,
-    path: location.pathname,
+    providerOrigin: location.origin,
+    providerPath: location.pathname,
     pageReady: ['interactive', 'complete'].includes(document.readyState),
     composerReady: Boolean(composer),
     composerState,
     accountUiPresent: profile,
-    authenticated: Boolean(composer) && !login && !challenge,
+    loginControlPresent: login,
     challengePresent: challenge,
   }
 })()
@@ -206,64 +224,49 @@ const inspectReadiness = async () => {
   }
 }
 
-const initialReadiness = await inspectReadiness()
-let readiness = initialReadiness
-let preservedDraftTargetId = null
-let candidateTargetId = initialTab.targetId
-let boundTargetId = null
-let failureReason = null
+const initialObservation = await inspectReadiness()
+let decision = decideEgoReadiness({
+  stage: "initial",
+  initialTargetId: initialTab.targetId,
+  candidateTargetId: initialTab.targetId,
+  preservedDraftTargetId: null,
+  observation: initialObservation,
+})
 
-if (initialReadiness.authenticated &&
-    initialReadiness.composerState === "nonempty") {
-  preservedDraftTargetId = initialTab.targetId
+if (decision.decision === "fresh_target_required") {
   try {
     const freshTab = await openOrReuseTab(
       `https://chatgpt.com/#codex-chat-${preflightId}`,
       { wait: true, timeout: 30 },
     )
-    candidateTargetId = freshTab?.targetId ?? null
-    if (!candidateTargetId ||
-        candidateTargetId === initialTab.targetId) {
-      failureReason = "fresh_target_not_distinct"
-    } else {
+    const candidateTargetId = freshTab?.targetId ?? initialTab.targetId
+    let freshObservation = initialObservation
+    if (candidateTargetId !== initialTab.targetId) {
       await switchTab(candidateTargetId)
-      readiness = await inspectReadiness()
-      if (!readiness.pageReady ||
-          !readiness.authenticated ||
-          readiness.challengePresent ||
-          readiness.composerState !== "empty") {
-        failureReason = "fresh_target_not_ready_and_empty"
-      }
+      freshObservation = await inspectReadiness()
     }
+    decision = decideEgoReadiness({
+      stage: "fresh",
+      initialTargetId: initialTab.targetId,
+      candidateTargetId,
+      preservedDraftTargetId: initialTab.targetId,
+      observation: freshObservation,
+    })
   } catch {
-    failureReason = "fresh_target_unavailable"
+    decision = {
+      ...decision,
+      decision: "stop",
+      ready: false,
+      failureReason: "fresh_target_unavailable",
+      targetId: null,
+    }
   }
 }
-
-const ready = !failureReason &&
-  readiness.pageReady &&
-  readiness.composerReady &&
-  readiness.authenticated &&
-  !readiness.challengePresent &&
-  readiness.composerState === "empty"
-if (ready) boundTargetId = candidateTargetId
 
 cliLog(JSON.stringify({
   preflightId,
   taskSpaceId: task.id,
-  targetId: boundTargetId,
-  candidateTargetId,
-  preservedDraftTargetId,
-  ready,
-  failureReason,
-  providerOrigin: readiness.origin,
-  providerPath: readiness.path,
-  pageReady: readiness.pageReady,
-  composerReady: readiness.composerReady,
-  composerState: readiness.composerState,
-  accountUiPresent: readiness.accountUiPresent,
-  authenticated: readiness.authenticated,
-  challengePresent: readiness.challengePresent,
+  ...decision,
 }))
 EOF
 ```
@@ -275,6 +278,9 @@ requires `ready`, `pageReady`, `composerReady`, `authenticated`,
 Never use unknown draft text to identify the composer, login, account, or
 challenge state. Draft text may be read only for the local `empty`, `nonempty`,
 or `unsupported` classification and must never be returned.
+The final `decision`, `ready`, and `failureReason` fields come from the
+executable local decision core. Only browser observation and bounded
+transport-exception handling remain in the heredoc.
 `accountUiPresent` is supporting evidence because the provider does not render
 a labeled account control in every layout. A false required field, missing or
 unsupported composer, nonempty fresh composer, reused target, or bounded
@@ -301,7 +307,8 @@ EOF
 Never automate the challenge. Resume only after the user explicitly confirms
 that login or verification is complete. Then call
 `takeOverTaskSpace(taskSpaceId)` in a new Ego heredoc and perform one fresh
-read-only readiness check in that same task space. If that one recheck fails,
+read-only readiness check in that same task space using the same bounded
+observation adapter and `decideEgoReadiness` module. If that one recheck fails,
 stop. Do not perform another handoff/recheck loop.
 
 If readiness fails without an authentication handoff and no inherited draft
@@ -436,13 +443,40 @@ every other or uncertain result as ambiguous.
 ## Finish the task space
 
 When the run becomes terminal and no user handoff is active, close the task
-space in a dedicated final Ego heredoc. If no inherited draft was preserved,
-close the whole task space:
+space in a dedicated final Ego heredoc. Compute a cleanup plan before any
+close or completion operation. The planner rejects identity collisions,
+missing targets, duplicate targets, and unexpected additional targets when
+whole-space cleanup is requested. If no inherited draft was preserved, close
+the whole task space:
 
 ```bash
-ego-browser nodejs <<'EOF'
+CODEX_CHAT_SKILL_DIR="<skill>" ego-browser nodejs <<'EOF'
+const skillDir = process.env.CODEX_CHAT_SKILL_DIR
+if (!skillDir) throw new Error("codex-chat skill directory is required")
+const { join } = await import("node:path")
+const { pathToFileURL } = await import("node:url")
+const { planEgoCleanup } = await import(pathToFileURL(join(
+  skillDir,
+  "scripts",
+  "lib",
+  "ego-readiness.mjs",
+)).href)
 const taskSpaceId = 7 // replace with the bound numeric ID
-const completion = await completeTaskSpace(taskSpaceId, { keep: false })
+const targetId = "TARGET_ID" // replace with the bound collaborator target
+const task = await useOrCreateTaskSpace(taskSpaceId)
+if (task.id !== taskSpaceId) throw new Error("bound task space changed")
+const tabs = await listTabs()
+const plan = planEgoCleanup({
+  targetIds: tabs.map((tab) => tab.targetId),
+  boundTargetId: targetId,
+  preservedDraftTargetId: null,
+})
+if (!plan.safe || plan.keepTaskSpace) {
+  throw new Error(plan.failureReason ?? "whole-space cleanup was not approved")
+}
+const completion = await completeTaskSpace(taskSpaceId, {
+  keep: plan.keepTaskSpace,
+})
 if (!completion.done) throw new Error("task space was not closed")
 EOF
 ```
@@ -452,24 +486,41 @@ collaborator tab by its exact `targetId`, then preserve the task space and
 original draft tab:
 
 ```bash
-ego-browser nodejs <<'EOF'
+CODEX_CHAT_SKILL_DIR="<skill>" ego-browser nodejs <<'EOF'
+const skillDir = process.env.CODEX_CHAT_SKILL_DIR
+if (!skillDir) throw new Error("codex-chat skill directory is required")
+const { join } = await import("node:path")
+const { pathToFileURL } = await import("node:url")
+const { planEgoCleanup } = await import(pathToFileURL(join(
+  skillDir,
+  "scripts",
+  "lib",
+  "ego-readiness.mjs",
+)).href)
 const taskSpaceId = 7 // replace with the bound numeric ID
 const targetId = "TARGET_ID" // replace with the bound collaborator target
 const preservedDraftTargetId = "PRESERVED_TARGET_ID"
-if (targetId === preservedDraftTargetId) {
-  throw new Error("collaborator and preserved-draft targets are not distinct")
-}
 const task = await useOrCreateTaskSpace(taskSpaceId)
 if (task.id !== taskSpaceId) throw new Error("bound task space changed")
 const tabs = await listTabs()
-if (!tabs.some((tab) => tab.targetId === targetId) ||
-    !tabs.some((tab) => tab.targetId === preservedDraftTargetId)) {
-  throw new Error("bound cleanup targets changed")
+const plan = planEgoCleanup({
+  targetIds: tabs.map((tab) => tab.targetId),
+  boundTargetId: targetId,
+  preservedDraftTargetId,
+})
+if (!plan.safe || !plan.keepTaskSpace) {
+  throw new Error(plan.failureReason ?? "draft-preserving cleanup was not approved")
 }
-await closeTab(targetId)
-const completion = await completeTaskSpace(taskSpaceId, { keep: true })
+for (const closeTargetId of plan.closeTargetIds) {
+  await closeTab(closeTargetId)
+}
+const completion = await completeTaskSpace(taskSpaceId, {
+  keep: plan.keepTaskSpace,
+})
 if (!completion.done) throw new Error("task space was not preserved")
 EOF
 ```
 
-Never close, clear, or submit the preserved draft tab.
+Never close, clear, or submit the preserved draft tab. If the cleanup planner
+returns `safe: false`, perform no cleanup mutation and report its bounded
+failure reason.

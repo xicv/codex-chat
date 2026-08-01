@@ -133,7 +133,9 @@ can restore an account-level draft into a new task space. Preserve any
 inherited draft untouched and make at most one source-free attempt to open and
 verify a distinct empty tab. A passing fallback binds both the numeric task
 space and exact browser target for the entire run. Never ask the user to submit
-an unknown draft.
+an unknown draft. Use the exact installed skill directory when importing the
+strict local `scripts/lib/ego-readiness.mjs` decision core; do not recreate its
+readiness or cleanup decisions inside the browser script.
 
 If provider readiness fails for any other reason, stop before source
 preparation. If the browser transport itself was proven healthy, complete the

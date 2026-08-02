@@ -40,6 +40,10 @@ that introduced each change; merge-only commits are omitted.
   exact context and task envelope, emits canonical composer bytes, selects a
   capability-gated ordinal-zero attachment for larger context, and never
   grants browser action, resend, or model-visibility authority.
+- An executable Ego compose, pre-submit, and post-click decision core that
+  excludes raw draft/response text, reasserts exact browser and attachment
+  bindings, permits one planned click only after every invariant, and keeps
+  ambiguous delivery non-resendable.
 - A neutral transport-probe release that frees an unused primary claim without
   falsely marking the browser host healthy or failed.
 - A bounded external-response observation budget that permits durable local

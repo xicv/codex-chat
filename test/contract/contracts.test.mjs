@@ -311,6 +311,21 @@ test("Ego submission classifies stale drafts and preserves at-most-once reconcil
   assert.notEqual(submitStart, -1);
   assert.ok(submitStart < cleanupStart);
   const submit = fallback.slice(submitStart, cleanupStart);
+  const decisionImport = submit.indexOf("ego-submission.mjs");
+  const composeDecision = submit.indexOf("decideEgoCompose({");
+  const preSubmitDecision = submit.indexOf("decideEgoPreSubmit({");
+  const click = submit.indexOf("await click(");
+  const postSubmitDecision = submit.indexOf("classifyEgoPostSubmit({");
+
+  assert.notEqual(decisionImport, -1);
+  assert.notEqual(composeDecision, -1);
+  assert.notEqual(preSubmitDecision, -1);
+  assert.notEqual(click, -1);
+  assert.notEqual(postSubmitDecision, -1);
+  assert.ok(decisionImport < composeDecision);
+  assert.ok(composeDecision < preSubmitDecision);
+  assert.ok(preSubmitDecision < click);
+  assert.ok(click < postSubmitDecision);
 
   assert.match(submit, /durable `send_reserved` marker/);
   assert.match(
@@ -322,11 +337,11 @@ test("Ego submission classifies stale drafts and preserves at-most-once reconcil
   assert.match(submit, /Never clear or overwrite an unknown\s+draft/);
   assert.match(
     submit,
-    /exactly equals the expected planned envelope[\s\S]*reuse\s+it without typing/,
+    /exactly equals the expected planned\s+envelope[\s\S]*reuse\s+it without typing/,
   );
   assert.match(
     submit,
-    /Only call `typeText\(taskEnvelope\)` when the normalized composer is empty/,
+    /decision is `type_planned` with `safeToType: true`[\s\S]*call `typeText\(taskEnvelope\)`/,
   );
   assert.match(submit, /typeText\(taskEnvelope\)/);
   assert.match(
@@ -334,7 +349,7 @@ test("Ego submission classifies stale drafts and preserves at-most-once reconcil
     /composer text exactly\s+equals the manifest's composer text and digest/,
   );
   assert.match(submit, /exactly one\s+enabled send control/);
-  assert.match(submit, /click\(sendLocator/);
+  assert.match(submit, /click\(submitDecision\.sendLocator/);
   assert.match(submit, /Do not use Enter or `pressKey` to submit/);
   assert.match(
     submit,
@@ -345,20 +360,26 @@ test("Ego submission classifies stale drafts and preserves at-most-once reconcil
   assert.match(submit, /call `uploadFile` exactly\s+once/);
   assert.match(
     submit,
+    /attachment ordinal, byte count, and digest/,
+  );
+  assert.match(
+    submit,
     /If upload output is missing[\s\S]*stop without another upload or send/,
   );
   assert.match(
     submit,
     /exactly one user turn contains the durable marker/,
   );
-  assert.match(
-    submit,
-    /missing\s+terminal output[\s\S]*read-only marker reconciliation[\s\S]*never\s+resend/,
-  );
+  assert.match(submit, /missing\s+terminal\s+output/);
+  assert.match(submit, /read-only marker reconciliation/);
+  assert.match(submit, /never resend/);
   assert.match(
     submit,
     /`\/c\/WEB:`[\s\S]*provisional[\s\S]*stable canonical conversation locator/,
   );
+  assert.match(submit, /Never pass composer, draft, response,[\s\S]*snapshot text/);
+  assert.match(submit, /`actionAuthorized: false`/);
+  assert.match(submit, /`resendAuthorized: false`/);
 });
 
 test("Ego canonicalizes multiline ProseMirror drafts without innerText paragraph inflation", async () => {

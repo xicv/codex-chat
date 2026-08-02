@@ -155,7 +155,13 @@ a new explicitly authorized run.
 An Ego writer persists the reservation before invoking the browser, then uses
 separate bounded compose, submit, and observe commands. Composition proceeds
 only when the normalized ChatGPT composer is empty or already exactly equals
-the reserved task envelope. Ego's `fillInput` is forbidden for this
+the reserved task envelope. A strict executable decision core receives only
+the bound task-space/target, digests, byte/count metadata, attachment identity,
+and locator state; raw draft and response text are excluded. It decides the
+only safe type/reuse branch, rechecks the exact ordinal/digest/bytes before one
+click, and classifies accepted/absent/ambiguous delivery after the click. Its
+narrow safe decision cannot replace the durable reservation, and it never
+authorizes resend. Ego's `fillInput` is forbidden for this
 contenteditable because it may append to a persisted draft. Any other non-empty
 draft is left untouched and is never suggested for submission. Submission
 rechecks the exact envelope, one marker, no matching submitted user turn, and

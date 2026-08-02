@@ -19,6 +19,7 @@ import { withOwnedFileLock } from "./file-lock.mjs";
 const execFileAsync = promisify(execFile);
 const SCHEMA = "CODEX_CHAT_TRANSPORT_GATE_V1";
 const CLAIM_TTL_MS = 120_000;
+const REPROBE_COOLDOWN_MS = 5 * 60_000;
 const MAX_RECORD_BYTES = 16 * 1024;
 
 function sha256(value) {
@@ -329,6 +330,7 @@ function claimResult({
   claimToken = null,
   restartVerified = null,
   current = null,
+  retryAfter = null,
 }) {
   return {
     gateState: probeAllowed ? "half_open" : current?.status ?? "unavailable",
@@ -338,10 +340,13 @@ function claimResult({
     claimToken,
     generation,
     previousFailure: current?.lastFailure ?? null,
-    retryAfter:
-      current?.status === "half_open" && current.claimExpiresAt !== null
-        ? new Date(current.claimExpiresAt).toISOString()
-        : null,
+    retryAfter: probeAllowed
+      ? null
+      : retryAfter ?? (
+          current?.status === "half_open" && current.claimExpiresAt !== null
+            ? new Date(current.claimExpiresAt).toISOString()
+            : null
+        ),
   };
 }
 
@@ -433,13 +438,24 @@ export async function transportGate({
         current?.status === "open" &&
         current.hostGenerationId === generation.hostGenerationId
       ) {
-        return claimResult({
-          probeAllowed: false,
-          reason: "same_host_generation_failed",
-          restartVerified: false,
-          generation,
-          current,
-        });
+        const failedAt = Date.parse(current.lastFailure.observedAt);
+        if (!Number.isFinite(failedAt)) {
+          fail(
+            "TRANSPORT_GATE_STATE_INVALID",
+            "Transport gate failure time is malformed or unsupported.",
+          );
+        }
+        const retryAt = failedAt + REPROBE_COOLDOWN_MS;
+        if (now.getTime() < retryAt) {
+          return claimResult({
+            probeAllowed: false,
+            reason: "same_host_cooldown_active",
+            restartVerified: false,
+            generation,
+            current,
+            retryAfter: new Date(retryAt).toISOString(),
+          });
+        }
       }
       if (
         current?.status === "half_open" &&
@@ -470,8 +486,14 @@ export async function transportGate({
         current !== null &&
         current.hostGenerationId !== generation.hostGenerationId
       );
+      const sameHostCooldownElapsed = (
+        current?.status === "open" &&
+        current.hostGenerationId === generation.hostGenerationId
+      );
       const reason = hostChanged
         ? "host_generation_changed"
+        : sameHostCooldownElapsed
+          ? "same_host_cooldown_elapsed"
         : current?.status === "half_open"
           ? "probe_claim_expired"
           : "probe_claimed";
@@ -487,6 +509,8 @@ export async function transportGate({
         reason,
         restartVerified: hostChanged
           ? appChanged(current, generation)
+          : sameHostCooldownElapsed
+            ? false
           : null,
         generation,
         claimToken: token,

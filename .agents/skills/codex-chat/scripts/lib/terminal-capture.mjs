@@ -2,23 +2,18 @@ import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
   lstat,
-  mkdir,
-  mkdtemp,
   open,
-  readFile,
   realpath,
-  rm,
-  stat,
-  writeFile,
 } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fail } from "./errors.mjs";
-import { withOwnedFileLock } from "./file-lock.mjs";
+import {
+  openImmutableEvidenceStore,
+  publishImmutableEvidence,
+  scanImmutableEvidence,
+} from "./immutable-evidence-store.mjs";
 import { parseResultEnvelope } from "./import.mjs";
 import { LIMITS_V1 } from "./limits.mjs";
-import { atomicWrite } from "./pack.mjs";
-import { scanDirectory } from "./scanner.mjs";
 import { loadRun, statePaths } from "./state.mjs";
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -215,43 +210,23 @@ function assertEnvelopeBinding(envelope, run) {
   }
 }
 
-async function prepareDirectory(stateDir, runId) {
+async function openTerminalStore(stateDir, runId) {
   const paths = statePaths(stateDir, runId);
   const runInfo = await lstat(paths.directory).catch(() => null);
   if (!runInfo?.isDirectory() || runInfo.isSymbolicLink()) {
     fail("TERMINAL_CAPTURE_RUN_INVALID", "Run state directory is invalid.");
   }
   const runDirectory = await realpath(paths.directory);
-  const root = path.join(runDirectory, "terminal-captures");
-  const directories = [
-    root,
-    path.join(root, "objects"),
-    path.join(root, "receipts"),
-    path.join(root, "slots"),
-    path.join(root, ".locks"),
-  ];
-  const parentIdentities = new Map();
-  for (const directory of directories) {
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    const info = await lstat(directory);
-    if (!info.isDirectory() || info.isSymbolicLink()) {
-      fail(
-        "TERMINAL_CAPTURE_OUTPUT_INVALID",
-        "Terminal capture evidence directories must be real directories.",
-      );
-    }
-    const canonical = await realpath(directory);
-    const identity = await stat(canonical);
-    parentIdentities.set(canonical, { dev: identity.dev, ino: identity.ino });
-  }
-  const canonicalRoot = await realpath(root);
-  const identity = await stat(canonicalRoot);
-  return {
-    root: canonicalRoot,
-    parent: canonicalRoot,
-    parentIdentity: { dev: identity.dev, ino: identity.ino },
-    parentIdentities,
-  };
+  return openImmutableEvidenceStore({
+    root: path.join(runDirectory, "terminal-captures"),
+    directories: ["objects", "receipts", "slots", ".locks"],
+    codes: {
+      directoryInvalid: "TERMINAL_CAPTURE_OUTPUT_INVALID",
+      parentChanged: "TERMINAL_CAPTURE_OUTPUT_INVALID",
+      slotBusy: "TERMINAL_CAPTURE_SLOT_BUSY",
+      slotConflict: "TERMINAL_CAPTURE_SLOT_CONFLICT",
+    },
+  });
 }
 
 function buildReceipt({
@@ -307,58 +282,16 @@ async function scanInputs({
   scanner,
   testMode,
 }) {
-  const staging = await mkdtemp(path.join(os.tmpdir(), "codex-chat-terminal-scan-"));
-  try {
-    await Promise.all([
-      writeFile(path.join(staging, "capture.txt"), captureBytes, { mode: 0o600 }),
-      writeFile(path.join(staging, "result.json"), resultBytes, { mode: 0o600 }),
-      writeFile(path.join(staging, "receipt.json"), serialized, { mode: 0o600 }),
-    ]);
-    return await scanDirectory(staging, scanner, { testMode });
-  } finally {
-    await rm(staging, { recursive: true, force: true });
-  }
-}
-
-async function readExisting(filePath, maxBytes, code) {
-  const info = await lstat(filePath).catch((error) => {
-    if (error.code === "ENOENT") return null;
-    throw error;
+  return scanImmutableEvidence({
+    entries: [
+      { name: "capture.txt", bytes: captureBytes },
+      { name: "result.json", bytes: resultBytes },
+      { name: "receipt.json", bytes: serialized },
+    ],
+    scanner,
+    testMode,
+    prefix: "codex-chat-terminal-scan-",
   });
-  if (info === null) return null;
-  if (!info.isFile() || info.isSymbolicLink() || info.size > maxBytes) {
-    fail(code, "Existing terminal capture evidence is invalid.");
-  }
-  return readFile(filePath);
-}
-
-async function writeOrVerify(filePath, bytes, directoryInfo, maxBytes, code) {
-  const existing = await readExisting(filePath, maxBytes, code);
-  if (existing) {
-    if (!existing.equals(bytes)) {
-      fail(code, "Digest-addressed terminal capture evidence contains different bytes.");
-    }
-    return false;
-  }
-  const parent = path.dirname(filePath);
-  const parentIdentity = directoryInfo.parentIdentities.get(parent);
-  if (!parentIdentity) {
-    fail(code, "Terminal capture target parent is not an approved directory.");
-  }
-  await atomicWrite(filePath, bytes, { parent, parentIdentity }).catch((error) => {
-    if (error.code === "OUTPUT_EXISTS") {
-      fail(code, "Terminal capture evidence appeared during creation.");
-    }
-    throw error;
-  });
-  return true;
-}
-
-async function assertExistingExact(filePath, bytes, maxBytes, code) {
-  const existing = await readExisting(filePath, maxBytes, code);
-  if (!existing || !existing.equals(bytes)) {
-    fail(code, "Authoritative terminal capture evidence is missing or changed.");
-  }
 }
 
 function parseReceipt(bytes) {
@@ -567,7 +500,7 @@ export async function validateTerminalCaptureReceipt({
       "Hardened terminal events require an absolute digest-bound capture receipt.",
     );
   }
-  const directoryInfo = await prepareDirectory(stateDir, runId);
+  const directoryInfo = await openTerminalStore(stateDir, runId);
   const canonicalReceipt = await realpath(data.captureReceiptPath).catch(() => null);
   if (
     !canonicalReceipt ||
@@ -777,143 +710,66 @@ export async function createTerminalCaptureReceipt({
     scanner,
     testMode,
   });
-  const directoryInfo = await prepareDirectory(stateDir, runId);
-  const lockPath = path.join(
-    directoryInfo.root,
-    ".locks",
-    `${receipt.slotId}.lock`,
-  );
-  const result = await withOwnedFileLock({
-    lockPath,
-    busyCode: "TERMINAL_CAPTURE_SLOT_BUSY",
-    busyMessage: "Another writer holds the terminal capture slot.",
-  }, async () => {
-    const current = await loadRun({ stateDir, runId });
-    assertRunEligible(current, runId);
-    if (
-      current.eventCount !== run.eventCount ||
-      current.lastEventHash !== run.lastEventHash ||
-      stable(current.outbound) !== stable(run.outbound)
-    ) {
-      fail(
-        "TERMINAL_CAPTURE_RUN_CHANGED",
-        "Run head changed before terminal capture evidence could be committed.",
-      );
-    }
-    const captureObject = path.join(
-      directoryInfo.root,
-      receipt.capture.objectPath,
-    );
-    const resultObject = path.join(
-      directoryInfo.root,
-      receipt.resultEnvelope.objectPath,
-    );
-    const receiptPath = path.join(
-      directoryInfo.root,
-      "receipts",
-      `${receipt.receiptId}.json`,
-    );
-    const slotPath = path.join(
-      directoryInfo.root,
-      "slots",
-      `${receipt.slotId}.json`,
-    );
-    const existingSlot = await readExisting(
-      slotPath,
-      MAX_RECEIPT_BYTES,
-      "TERMINAL_CAPTURE_SLOT_INVALID",
-    );
-    if (existingSlot) {
-      try {
-        parseSlot(existingSlot, receipt, receiptSha256);
-      } catch (error) {
+  const directoryInfo = await openTerminalStore(stateDir, runId);
+  const receiptRelativePath = `receipts/${receipt.receiptId}.json`;
+  const slotBytes = Buffer.from(`${stable({
+    kind: "CODEX_CHAT_TERMINAL_CAPTURE_SLOT_V1",
+    protocolVersion: 1,
+    slotId: receipt.slotId,
+    receiptId: receipt.receiptId,
+    receiptSha256,
+  })}\n`);
+  const result = await publishImmutableEvidence({
+    store: directoryInfo,
+    slotId: receipt.slotId,
+    slot: {
+      relativePath: `slots/${receipt.slotId}.json`,
+      bytes: slotBytes,
+      maxBytes: MAX_RECEIPT_BYTES,
+    },
+    artifacts: [
+      {
+        relativePath: receipt.capture.objectPath,
+        bytes: captureBytes,
+        maxBytes: MAX_CAPTURE_BYTES,
+        conflictCode: "TERMINAL_CAPTURE_OBJECT_CONFLICT",
+      },
+      {
+        relativePath: receipt.resultEnvelope.objectPath,
+        bytes: resultBytes,
+        maxBytes: LIMITS_V1.result.maxResultBytes,
+        conflictCode: "TERMINAL_CAPTURE_OBJECT_CONFLICT",
+      },
+      {
+        relativePath: receiptRelativePath,
+        bytes: serialized,
+        maxBytes: MAX_RECEIPT_BYTES,
+        conflictCode: "TERMINAL_CAPTURE_RECEIPT_CONFLICT",
+      },
+    ],
+    authority: {
+      lockPath: statePaths(stateDir, runId).lock,
+      busyCode: "TERMINAL_CAPTURE_RUN_BUSY",
+      busyMessage: "Another writer holds the terminal capture run.",
+      async assertCurrent() {
+        const current = await loadRun({ stateDir, runId });
+        assertRunEligible(current, runId);
         if (
-          error.code === "TERMINAL_CAPTURE_SLOT_INVALID" ||
-          error.code === "TERMINAL_CAPTURE_SLOT_MISMATCH"
+          current.eventCount !== run.eventCount ||
+          current.lastEventHash !== run.lastEventHash ||
+          stable(current.outbound) !== stable(run.outbound)
         ) {
           fail(
-            "TERMINAL_CAPTURE_SLOT_CONFLICT",
-            "Terminal capture slot already binds different evidence.",
+            "TERMINAL_CAPTURE_RUN_CHANGED",
+            "Run head changed before terminal capture evidence could be committed.",
           );
         }
-        throw error;
-      }
-      await Promise.all([
-        assertExistingExact(
-          captureObject,
-          captureBytes,
-          MAX_CAPTURE_BYTES,
-          "TERMINAL_CAPTURE_OBJECT_CONFLICT",
-        ),
-        assertExistingExact(
-          resultObject,
-          resultBytes,
-          LIMITS_V1.result.maxResultBytes,
-          "TERMINAL_CAPTURE_OBJECT_CONFLICT",
-        ),
-        assertExistingExact(
-          receiptPath,
-          serialized,
-          MAX_RECEIPT_BYTES,
-          "TERMINAL_CAPTURE_RECEIPT_CONFLICT",
-        ),
-      ]);
-      return { receiptPath, slotPath, idempotent: true };
-    }
-    await Promise.all([
-      writeOrVerify(
-        captureObject,
-        captureBytes,
-        directoryInfo,
-        MAX_CAPTURE_BYTES,
-        "TERMINAL_CAPTURE_OBJECT_CONFLICT",
-      ),
-      writeOrVerify(
-        resultObject,
-        resultBytes,
-        directoryInfo,
-        LIMITS_V1.result.maxResultBytes,
-        "TERMINAL_CAPTURE_OBJECT_CONFLICT",
-      ),
-      writeOrVerify(
-        receiptPath,
-        serialized,
-        directoryInfo,
-        MAX_RECEIPT_BYTES,
-        "TERMINAL_CAPTURE_RECEIPT_CONFLICT",
-      ),
-    ]);
-    const slotBytes = Buffer.from(`${stable({
-      kind: "CODEX_CHAT_TERMINAL_CAPTURE_SLOT_V1",
-      protocolVersion: 1,
-      slotId: receipt.slotId,
-      receiptId: receipt.receiptId,
-      receiptSha256,
-    })}\n`);
-    const slotParent = path.dirname(slotPath);
-    const slotParentIdentity = directoryInfo.parentIdentities.get(slotParent);
-    if (!slotParentIdentity) {
-      fail(
-        "TERMINAL_CAPTURE_SLOT_INVALID",
-        "Terminal capture slot parent is not an approved directory.",
-      );
-    }
-    await atomicWrite(slotPath, slotBytes, {
-      parent: slotParent,
-      parentIdentity: slotParentIdentity,
-    }).catch((error) => {
-      if (error.code === "OUTPUT_EXISTS") {
-        fail(
-          "TERMINAL_CAPTURE_SLOT_CONFLICT",
-          "Terminal capture slot appeared during creation.",
-        );
-      }
-      throw error;
-    });
-    return { receiptPath, slotPath, idempotent: false };
+      },
+    },
   });
+  const receiptPath = result.artifactPaths[receiptRelativePath];
   return {
-    artifactPath: result.receiptPath,
+    artifactPath: receiptPath,
     slotPath: result.slotPath,
     size: serialized.byteLength,
     sha256: receiptSha256,
@@ -923,7 +779,7 @@ export async function createTerminalCaptureReceipt({
     resultEnvelopeSha256: receipt.resultEnvelope.sha256,
     eventData: eventDataFromReceipt(
       receipt,
-      result.receiptPath,
+      receiptPath,
       receiptSha256,
     ),
     scanner: scan,

@@ -53,6 +53,13 @@ failed scan or stale stream head publishes no authoritative slot. Raw provider
 identifiers may themselves look secret-shaped, so prefer recorded SHA-256
 fingerprints where the provider exposes enough stable evidence.
 
+Delivery and terminal publication share one private immutable-evidence store.
+It keeps directory identities encapsulated, opens existing artifacts with
+`O_NOFOLLOW`, bounds every scan/read, locks the slot before the run head,
+publishes exact artifacts before the create-once authoritative slot, and
+revalidates all artifact bytes on idempotent replay. A partial artifact set is
+non-authoritative and can only be completed by the same exact slot bytes.
+
 Transport planning reads both egress inputs without following the final path,
 checks the caller-supplied digests, rejects invalid UTF-8/LF task bytes and
 non-v1 context artifacts, and scans the context, task, and generated manifest
@@ -67,7 +74,8 @@ requires exactly one ordered boundary pair, an exact extracted result match,
 the expected final marker, and the active run/turn/context/route/provider
 binding. It scans the capture, result, and generated receipt together before
 publishing content-addressed objects and a create-once authoritative slot
-beneath the run directory. `response_terminal`, review start, import, and
+beneath the run directory while the exact run head remains locked.
+`response_terminal`, review start, import, and
 acceptance re-read and hash the receipt, recompute and verify its authoritative
 slot, and re-read both objects. Missing, changed, truncated, crossed, or
 reconstructed evidence fails closed.

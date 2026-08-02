@@ -371,7 +371,10 @@ node .agents/skills/codex-chat/scripts/codex-chat.mjs control \
 
 Context outputs must be new paths in existing real directories. Delivery
 receipts use create-only, content-addressed paths beneath the durable run state
-directory. The CLI never replaces an existing artifact.
+directory. Delivery receipts and terminal captures share one internal
+immutable-evidence store for exact-input scanning, private directory identity,
+per-slot and run-head serialization, partial-publication recovery, idempotent
+replay, and final tamper checks. The CLI never replaces an existing artifact.
 
 | Command | Purpose |
 | --- | --- |

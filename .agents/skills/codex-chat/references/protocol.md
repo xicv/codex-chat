@@ -197,6 +197,25 @@ canonical capsule store, just as they share one canonical run-state directory.
 The lower-level `pack` and `transport-plan` commands remain compatibility
 primitives, not the default new-capsule workflow.
 
+`protocol-codecs.mjs` is the deep module for the outbound capsule family. Its
+two-entry interface canonically encodes or strictly decodes
+`COLLAB_CONTEXT_V1`, `CODEX_CHAT_TRANSPORT_MANIFEST_V1`, and
+`CODEX_CHAT_CAPSULE_V1`. The implementation owns kind/version dispatch,
+exact-key and byte limits, portable path policy, canonical key order and LF,
+content digests, and cross-field strategy invariants. Unsupported versions,
+noncanonical JSON, schema drift, and relational contradictions have distinct
+stable errors.
+
+After preparation and again immediately before browser mutation,
+`capsule-validate` opens the existing private store without creating paths,
+binds the caller's expected receipt SHA-256, no-follow reads and hashes every
+referenced object, decodes all versioned artifacts, and reconstructs the exact
+transport manifest from the context/task bytes plus the selected transport and
+upload-capability observation. A different transport, changed artifact,
+crossed receipt, noncanonical artifact, or changed decision fails closed. The
+result remains local evidence and never changes action, resend, or model
+visibility authority.
+
 The manifest chooses one deterministic strategy. A context no larger than
 24,576 bytes is embedded in one canonical
 composer envelope only when the complete envelope remains within 49,152

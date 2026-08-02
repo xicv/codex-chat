@@ -5,6 +5,7 @@ import { fail } from "./errors.mjs";
 import {
   openImmutableEvidenceStore,
   publishImmutableEvidence,
+  readImmutableEvidence,
   scanImmutableEvidence,
 } from "./immutable-evidence-store.mjs";
 import {
@@ -12,6 +13,10 @@ import {
   LIMITS_TRANSPORT_MANIFEST_V1,
 } from "./limits.mjs";
 import { buildPackedContext } from "./pack.mjs";
+import {
+  decodeProtocolArtifact,
+  encodeProtocolArtifact,
+} from "./protocol-codecs.mjs";
 import {
   buildTransportManifest,
   readBoundedTransportFile,
@@ -61,6 +66,32 @@ function artifactPath(kind, digest, extension) {
   return `artifacts/${kind}-${digest}.${extension}`;
 }
 
+function validatedCapsuleId(capsuleId) {
+  if (!ID.test(capsuleId ?? "")) {
+    fail(
+      "CAPSULE_ID_INVALID",
+      "Capsule ID must be a bounded portable protocol identity.",
+    );
+  }
+  return capsuleId;
+}
+
+async function openCapsuleStore(outputRoot, { create = true } = {}) {
+  if (
+    typeof outputRoot !== "string" ||
+    outputRoot.length === 0 ||
+    Buffer.byteLength(outputRoot) > 4096
+  ) {
+    fail("CAPSULE_DIRECTORY_INVALID", "Capsule output root path is invalid.");
+  }
+  return openImmutableEvidenceStore({
+    root: path.resolve(outputRoot),
+    directories: ["artifacts", "capsules", ".locks"],
+    codes: CODES,
+    create,
+  });
+}
+
 export async function prepareCapsule({
   root,
   includes,
@@ -72,12 +103,7 @@ export async function prepareCapsule({
   scanner = "gitleaks",
   testMode = false,
 }) {
-  if (!ID.test(capsuleId ?? "")) {
-    fail(
-      "CAPSULE_ID_INVALID",
-      "Capsule ID must be a bounded portable protocol identity.",
-    );
-  }
+  validatedCapsuleId(capsuleId);
   const [packed, taskEnvelopeBytes] = await Promise.all([
     buildPackedContext({ root, includes, testMode }),
     readBoundedTransportFile(
@@ -98,7 +124,7 @@ export async function prepareCapsule({
     transportKind,
     uploadCapability,
   });
-  const transportManifestBytes = Buffer.from(`${JSON.stringify(manifest)}\n`);
+  const transportManifestBytes = encodeProtocolArtifact(manifest);
   if (
     transportManifestBytes.byteLength >
     LIMITS_TRANSPORT_MANIFEST_V1.maxArtifactBytes
@@ -150,7 +176,7 @@ export async function prepareCapsule({
     actionAuthorized: false,
     resendAuthorized: false,
   };
-  const receiptBytes = Buffer.from(`${JSON.stringify(receipt)}\n`);
+  const receiptBytes = encodeProtocolArtifact(receipt);
   if (receiptBytes.byteLength > LIMITS_CAPSULE_V1.maxReceiptBytes) {
     fail(
       "CAPSULE_RECEIPT_TOO_LARGE",
@@ -170,11 +196,7 @@ export async function prepareCapsule({
     prefix: "codex-chat-capsule-scan-",
   });
 
-  const store = await openImmutableEvidenceStore({
-    root: canonicalOutputRoot,
-    directories: ["artifacts", "capsules", ".locks"],
-    codes: CODES,
-  });
+  const store = await openCapsuleStore(canonicalOutputRoot);
   const publication = await publishImmutableEvidence({
     store,
     slotId: capsuleId,
@@ -230,10 +252,196 @@ export async function prepareCapsule({
       failureReason: manifest.failureReason,
       reservationEligible: manifest.reservationEligible,
       composerSha256: manifest.composer.sha256,
+      transportKind: manifest.transportKind,
+      uploadCapability: manifest.uploadCapability,
     },
     modelVisible: receipt.modelVisible,
     actionAuthorized: receipt.actionAuthorized,
     resendAuthorized: receipt.resendAuthorized,
     scanner: scan,
+  };
+}
+
+function assertArtifact(receiptEntry, evidence, conflictCode) {
+  if (
+    evidence.bytes.byteLength !== receiptEntry.bytes ||
+    sha256(evidence.bytes) !== receiptEntry.sha256
+  ) {
+    fail(conflictCode, "Capsule artifact bytes do not match the receipt.");
+  }
+}
+
+function validateTaskEnvelope(bytes) {
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    fail(
+      "CAPSULE_TASK_ENVELOPE_CONFLICT",
+      "Capsule task envelope is not valid UTF-8.",
+    );
+  }
+  if (text.includes("\0") || text.includes("\r") || !text.endsWith("\n")) {
+    fail(
+      "CAPSULE_TASK_ENVELOPE_CONFLICT",
+      "Capsule task envelope is not canonical UTF-8/LF text.",
+    );
+  }
+}
+
+export async function validateCapsule({
+  outputRoot,
+  capsuleId,
+  expectedReceiptSha256,
+  expectedTransportKind,
+  expectedUploadCapability,
+}) {
+  validatedCapsuleId(capsuleId);
+  if (!/^[a-f0-9]{64}$/u.test(expectedReceiptSha256 ?? "")) {
+    fail(
+      "CAPSULE_RECEIPT_DIGEST_INVALID",
+      "Expected capsule receipt SHA-256 is invalid.",
+    );
+  }
+  if (
+    !ID.test(expectedTransportKind ?? "") ||
+    !["available", "unavailable", "unknown"].includes(
+      expectedUploadCapability,
+    )
+  ) {
+    fail(
+      "CAPSULE_TRANSPORT_EXPECTATION_INVALID",
+      "Expected capsule transport selection is invalid.",
+    );
+  }
+  const store = await openCapsuleStore(outputRoot, { create: false });
+  const receiptEvidence = await readImmutableEvidence({
+    store,
+    relativePath: `capsules/${capsuleId}.json`,
+    maxBytes: LIMITS_CAPSULE_V1.maxReceiptBytes,
+    conflictCode: "CAPSULE_RECEIPT_CONFLICT",
+  });
+  const receiptSha256 = sha256(receiptEvidence.bytes);
+  if (receiptSha256 !== expectedReceiptSha256) {
+    fail(
+      "CAPSULE_RECEIPT_DIGEST_MISMATCH",
+      "Capsule receipt does not match its expected SHA-256.",
+    );
+  }
+  const receipt = decodeProtocolArtifact(receiptEvidence.bytes, {
+    expectedKind: "CODEX_CHAT_CAPSULE_V1",
+  });
+  if (receipt.capsuleId !== capsuleId) {
+    fail(
+      "CAPSULE_RECEIPT_CONFLICT",
+      "Capsule receipt is bound to a different capsule identity.",
+    );
+  }
+
+  const [contextEvidence, taskEvidence, transportEvidence] = await Promise.all([
+    readImmutableEvidence({
+      store,
+      relativePath: receipt.context.artifact,
+      maxBytes: LIMITS_TRANSPORT_MANIFEST_V1.maxContextBytes,
+      conflictCode: "CAPSULE_CONTEXT_CONFLICT",
+    }),
+    readImmutableEvidence({
+      store,
+      relativePath: receipt.taskEnvelope.artifact,
+      maxBytes: LIMITS_TRANSPORT_MANIFEST_V1.maxTaskEnvelopeInputBytes,
+      conflictCode: "CAPSULE_TASK_ENVELOPE_CONFLICT",
+    }),
+    readImmutableEvidence({
+      store,
+      relativePath: receipt.transportManifest.artifact,
+      maxBytes: LIMITS_TRANSPORT_MANIFEST_V1.maxArtifactBytes,
+      conflictCode: "CAPSULE_TRANSPORT_MANIFEST_CONFLICT",
+    }),
+  ]);
+  assertArtifact(receipt.context, contextEvidence, "CAPSULE_CONTEXT_CONFLICT");
+  assertArtifact(
+    receipt.taskEnvelope,
+    taskEvidence,
+    "CAPSULE_TASK_ENVELOPE_CONFLICT",
+  );
+  assertArtifact(
+    receipt.transportManifest,
+    transportEvidence,
+    "CAPSULE_TRANSPORT_MANIFEST_CONFLICT",
+  );
+  decodeProtocolArtifact(contextEvidence.bytes, {
+    expectedKind: "COLLAB_CONTEXT_V1",
+  });
+  validateTaskEnvelope(taskEvidence.bytes);
+  const transport = decodeProtocolArtifact(transportEvidence.bytes, {
+    expectedKind: "CODEX_CHAT_TRANSPORT_MANIFEST_V1",
+  });
+  if (
+    transport.transportKind !== expectedTransportKind ||
+    transport.uploadCapability !== expectedUploadCapability
+  ) {
+    fail(
+      "CAPSULE_TRANSPORT_MISMATCH",
+      "Capsule transport differs from the selected transport.",
+    );
+  }
+  const rebuiltTransportBytes = encodeProtocolArtifact(buildTransportManifest({
+    contextBytes: contextEvidence.bytes,
+    expectedContextSha256: receipt.context.sha256,
+    taskEnvelopeBytes: taskEvidence.bytes,
+    expectedTaskEnvelopeSha256: receipt.taskEnvelope.sha256,
+    transportKind: expectedTransportKind,
+    uploadCapability: expectedUploadCapability,
+  }));
+  if (!rebuiltTransportBytes.equals(transportEvidence.bytes)) {
+    fail(
+      "CAPSULE_BINDING_MISMATCH",
+      "Capsule transport manifest is not derived from its bound inputs.",
+    );
+  }
+  if (
+    transport.context.bytes !== receipt.context.bytes ||
+    transport.context.sha256 !== receipt.context.sha256 ||
+    transport.taskEnvelope.bytes !== receipt.taskEnvelope.bytes ||
+    transport.taskEnvelope.sha256 !== receipt.taskEnvelope.sha256 ||
+    transport.strategy !== receipt.transportManifest.strategy ||
+    transport.reservationEligible !==
+      receipt.transportManifest.reservationEligible ||
+    transport.composer.sha256 !== receipt.transportManifest.composerSha256
+  ) {
+    fail(
+      "CAPSULE_BINDING_MISMATCH",
+      "Capsule receipt and transport manifest bindings differ.",
+    );
+  }
+
+  return {
+    valid: true,
+    capsuleId,
+    receiptPath: receiptEvidence.path,
+    receiptSha256,
+    context: {
+      artifactPath: contextEvidence.path,
+      bytes: receipt.context.bytes,
+      sha256: receipt.context.sha256,
+    },
+    taskEnvelope: {
+      artifactPath: taskEvidence.path,
+      bytes: receipt.taskEnvelope.bytes,
+      sha256: receipt.taskEnvelope.sha256,
+    },
+    transportManifest: {
+      artifactPath: transportEvidence.path,
+      bytes: receipt.transportManifest.bytes,
+      sha256: receipt.transportManifest.sha256,
+      strategy: receipt.transportManifest.strategy,
+      reservationEligible: receipt.transportManifest.reservationEligible,
+      composerSha256: receipt.transportManifest.composerSha256,
+      transportKind: transport.transportKind,
+      uploadCapability: transport.uploadCapability,
+    },
+    modelVisible: receipt.modelVisible,
+    actionAuthorized: receipt.actionAuthorized,
+    resendAuthorized: receipt.resendAuthorized,
   };
 }

@@ -317,6 +317,13 @@ node <skill>/scripts/codex-chat.mjs prepare-capsule \
   --transport-kind <selected-transport> \
   --upload-capability <available|unavailable|unknown> \
   --output-root /private/tmp/codex-chat-capsules
+
+node <skill>/scripts/codex-chat.mjs capsule-validate \
+  --output-root /private/tmp/codex-chat-capsules \
+  --capsule-id <capsule-id> \
+  --receipt-sha256 <capsule-receipt-sha256> \
+  --transport-kind <selected-transport> \
+  --upload-capability <available|unavailable|unknown>
 ```
 
 The output-root parent must already exist; the helper creates or reuses a
@@ -328,6 +335,12 @@ are incomplete and must not be sent or bound to a run. An exact replay recovers
 an interrupted publication idempotently; a different snapshot under the same
 capsule ID fails closed. Concurrent coordinators therefore converge on one
 receipt or receive an explicit conflict instead of mixing generations.
+`capsule-validate` is read-only and must pass before run creation. It opens no
+missing store, revalidates the expected receipt digest and every referenced
+object, strictly decodes each versioned protocol, reconstructs the transport
+manifest from the exact context/task bytes, and rejects a different transport
+or upload-capability observation. Its `valid: true` result proves local capsule
+integrity only; `actionAuthorized` and `resendAuthorized` remain false.
 
 The helper rejects secrets, sensitive filenames, symlinks, traversal, unsafe
 text, collisions, and oversized payloads. It scans the exact staged capsule
@@ -492,11 +505,13 @@ when observable; confirmation leases that locator too. Idempotency keys and
 outbound markers are bound to their exact operation and cannot be reused for
 different data. Do not route by conversation title or model label.
 
-Read the bound transport manifest again immediately before browser mutation.
-Its digest must match the run, its strategy must not be `stop`, and its exact
-`composer.text` must still match the recorded composer digest. For an
-attachment strategy, the exact context artifact and ordinal must match too.
-Never improvise a different inline/attachment choice after reservation.
+Run `capsule-validate` again immediately before browser mutation with the
+receipt digest and selected transport/capability bound at preparation. Then
+read the returned transport-manifest path. Its digest must match the run, its
+strategy must not be `stop`, and its exact `composer.text` must still match the
+recorded composer digest. For an attachment strategy, the returned exact
+context path and ordinal zero must match too. Never improvise a different
+inline/attachment choice after reservation.
 
 For the bound Ego transport, follow
 [ego-browser.md](references/ego-browser.md#submit-one-bound-turn) exactly. Keep

@@ -4,13 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { fail } from "./errors.mjs";
 import { LIMITS_V2 } from "./limits.mjs";
+import { isSensitivePath, validateRelativePath } from "./path-policy.mjs";
 import {
   atomicWrite,
   inspectOutput,
-  isSensitivePath,
   readSelectedFile,
 } from "./pack.mjs";
-import { validateIncludes, validateRelativePath } from "./preflight.mjs";
+import { validateIncludes } from "./preflight.mjs";
 import { scanDirectory } from "./scanner.mjs";
 
 const {

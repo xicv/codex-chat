@@ -302,11 +302,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 151/151 |
+| Unit tests | 162/162 |
 | Contract tests | 35/35 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 3/3 |
-| Aggregate test gate | 194/194 |
+| Aggregate test gate | 205/205 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -424,6 +424,11 @@ model label, agentic allowance, upload capability, and API budget separately.
   shapes stop without mutation. Ego types only into an empty composer and uses
   one verified send-button click. Compose, submit, and observe are separate, so
   missing command output is reconciled read-only instead of retried.
+- Ego compose, pre-submit, and post-click branches use a strict local decision
+  core instead of duplicated inline conditions. It receives no raw draft or
+  response text, reasserts the exact task-space/target and attachment identity,
+  and keeps missing output, provisional locators, duplicate markers, and
+  crossed bindings ambiguous without authorizing resend.
 - A healthy primary with an unavailable authenticated composer is a provider
   or user-authentication blocker, not a reason to switch browsers.
 - The selected transport is bound to the complete run. Any possible upload or

@@ -231,6 +231,13 @@ never uses append-prone `fillInput`, never clears an unknown draft, and never
 suggests submitting unknown content or submits with Enter. A separate submit
 command verifies one enabled send control and performs one explicit click; a
 separate observer reconciles the durable marker if terminal output is missing.
+All three branches call a strict local decision core that rejects unknown
+fields and raw draft/response text, reasserts the task-space and exact target,
+binds accepted attachment evidence to the planned ordinal/bytes/digest, and
+keeps crossed targets, provisional locators, duplicate markers, missing click
+output, and contradictory evidence ambiguous. Its result is not independent
+authority: the durable controller reservation remains required, and resend is
+always false.
 
 After `send_confirmed`, absence of evidence is not evidence of failed delivery. Disconnect, timeout, idle, missing output, stale UI, and changed allowance reset time never permit resend.
 

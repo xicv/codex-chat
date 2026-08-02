@@ -388,6 +388,31 @@ const taskEnvelope = transportManifest.composer.text
 Do not use CommonJS `require` in an Ego script that also uses top-level `await`;
 Node rejects that ambiguous module format before any browser action.
 
+Each compose, submit, and observe heredoc must also dynamically import the
+strict local decision core. Do not reimplement its branches in browser prose:
+
+```js
+const { join } = await import("node:path")
+const { pathToFileURL } = await import("node:url")
+const {
+  decideEgoCompose,
+  decideEgoPreSubmit,
+  classifyEgoPostSubmit,
+} = await import(pathToFileURL(join(
+  skillDir,
+  "scripts",
+  "lib",
+  "ego-submission.mjs",
+)).href)
+```
+
+The module accepts only bounded identities, digests, byte/count metadata,
+attachment identity, and locator state. Never pass composer, draft, response,
+or snapshot text to it. Its `actionAuthorized: false` output means the module
+cannot replace the durable `send_reserved` and controller gates; its narrow
+`safeToType` or `safeToClick` decision is usable only inside that already-bound
+operation. Every post-submit result keeps `resendAuthorized: false`.
+
 If the bound strategy is `attachment-context`, use one dedicated upload
 heredoc after `send_reserved` and before compose. Re-hash the exact local
 context artifact and require its bytes, SHA-256, and ordinal zero to match the
@@ -424,17 +449,22 @@ In the compose heredoc:
    it as unsupported composer DOM and stop without clearing, typing, or
    sending. Never use `fillInput` for ChatGPT's `contenteditable`: it appends
    to the existing ProseMirror content instead of reliably replacing it.
-3. If the normalized composer is empty, focus it and type the planned composer
-   envelope.
-   Only call `typeText(taskEnvelope)` when the normalized composer is empty.
-4. If the normalized composer exactly equals the expected planned envelope,
-   reuse it without typing.
-5. For every other non-empty value, stop. Never clear or overwrite an unknown
+3. Hash the normalized composer locally, then call `decideEgoCompose({ ... })`
+   with the bound task-space/target, live unique target IDs, selected target,
+   provider origin, composer classification, byte count, and digest. Represent
+   unsupported DOM with null bytes/digest; do not pass its text. If and only if
+   the decision is `type_planned` with `safeToType: true`, focus the empty
+   composer and call `typeText(taskEnvelope)`. If the decision is
+   `reuse_exact`, the nonempty composer exactly equals the expected planned
+   envelope; reuse it without typing. Every other decision stops without
+   mutation. `actionAuthorized` remains false because the durable controller
+   reservation is still required.
+4. For every other non-empty value, stop. Never clear or overwrite an unknown
    draft, even when it appears to come from an earlier failed run. Never ask
    the user to submit an unknown draft: submitting it could send unrelated
    content. Report that the bound collaborator tab diverged and leave it for
    user inspection without creating another tab or run.
-6. Before leaving the compose heredoc, verify that the composer text exactly
+5. Before leaving the compose heredoc, verify that the composer text exactly
    equals the manifest's composer text and digest, that the durable marker
    occurs once in it and zero times in submitted user turns, and that there is
    exactly one enabled send control. Derive a stable `sendLocator` from that
@@ -444,10 +474,20 @@ In the separate submit heredoc, re-read the transport manifest and same task
 space and repeat every pre-submit invariant: exact planned composer envelope,
 one composer marker, no submitted user marker, required attachment evidence
 when applicable, and exactly one enabled send control matching `sendLocator`.
-Then perform the single mutating action:
+Pass those bounded observations to `decideEgoPreSubmit({ ... })`, including the
+planned and observed attachment ordinal, byte count, and digest (all null with
+`not_required` for inline transport). If it does not return `submit_once` with
+`safeToClick: true`, stop. Use only its returned locator for the single
+mutating action:
 
 ```js
-await click(sendLocator, { label: 'send reserved turn' })
+const submitDecision = decideEgoPreSubmit({
+  binding: { taskSpaceId, targetId },
+  plan: submitPlan,
+  observation: submitObservation,
+})
+if (!submitDecision.safeToClick) throw new Error("submit decision stopped")
+await click(submitDecision.sendLocator, { label: 'send reserved turn' })
 ```
 
 Do not use Enter or `pressKey` to submit. Observe only long enough to determine
@@ -463,11 +503,17 @@ cannot be observed, preserve the marker and classify the delivery evidence as
 ambiguous instead of inventing a locator.
 
 Use the third, read-only observe heredoc to reconcile the marker and collect
-the collaborator result. If a compose, submit, or observe command has missing
-terminal output, perform read-only marker reconciliation in a new bounded
-heredoc and never resend. Classify exactly one submitted marker as accepted,
-zero as absent only when the prior submit action provably did not run, and
-every other or uncertain result as ambiguous.
+the collaborator result. Pass the bound identities, unique live targets,
+provider origin, click outcome, submitted-marker count, and stable/provisional/
+unobserved locator state to `classifyEgoPostSubmit({ ... })`; do not pass raw
+response text. If a compose, submit, or observe command has missing terminal
+output, perform read-only marker reconciliation in a new bounded heredoc and
+never resend. The classifier accepts exactly one submitted marker only with a
+stable non-`/c/WEB:` locator and a click outcome that is not provably absent.
+It classifies zero markers as absent only when the prior submit action provably
+did not run and no locator was observed. Every crossed binding, duplicate or
+unobservable marker, provisional locator, missing output, or contradictory
+observation remains ambiguous with `resendAuthorized: false`.
 
 ## Finish the task space
 

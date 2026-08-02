@@ -212,6 +212,14 @@ durable reservation; it is not send authority. Every plan keeps
 `modelVisible: "unknown"`. The browser adapter may perform its one planned
 action only after `send_reserved` is durable. A missing or ambiguous upload
 result never authorizes another upload or a send without the required context.
+For Ego, every compose, pre-submit, and post-click branch must call the strict
+`ego-submission.mjs` decision core described in
+[ego-browser.md](references/ego-browser.md). Pass only the bound task-space and
+target identities, digests, byte/count metadata, attachment identity, and
+provider locator state; never pass raw draft or response text. Its narrow
+`safeToType` and `safeToClick` results are usable only with the already-durable
+reservation and complete browser invariants. The module itself keeps
+`actionAuthorized: false` and always keeps `resendAuthorized: false`.
 
 When code, text, images, PDFs, documents, spreadsheets, data, or lossy
 derivatives must be related, create a `CODEX_CHAT_MANIFEST_PLAN_V2` and run:

@@ -8,6 +8,10 @@ that introduced each change; merge-only commits are omitted.
 
 ### Added
 
+- A deep, durable `transport-attempt` interface that owns Browser probing,
+  the single rediscovery, neutral unavailability release, Ego bootstrap
+  fallback, inherited-draft preservation, exact task-space/target binding,
+  private capabilities, and resumable status without source egress.
 - A committed-`main` local installer that synchronizes the personal Codex skill
   to `~/.codex/skills/codex-chat` and exposes the bundled CLI through
   `~/.local/bin/codex-chat`.

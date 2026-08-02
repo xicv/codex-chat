@@ -19,13 +19,23 @@ Before source selection, packing, scanning, run creation, or send reservation:
    do not transfer credential material. The user owns installation, login,
    account selection, CAPTCHA, passkeys, passwords, and two-factor
    verification.
-4. After acquiring bootstrap ownership below, create one isolated task space
+4. After `transport-attempt` returns `observe_ego_initial`, create one isolated task space
    with an opaque random preflight identity.
    Never put repository paths, source, task text, or user data in its name.
 
-## Acquire bootstrap ownership
+## Bootstrap ownership
 
-Before the first `ego-browser` invocation, acquire the single local lease for
+For the default workflow, `transport-attempt` has already acquired the lease
+before it returns an Ego decision. It keeps the raw capability in its private
+durable record, binds the numeric task-space observation, and releases the
+lease on `ready` or `stop`. Do not run the commands below or copy a lease token
+into a temporary controller script.
+
+The following low-level commands exist only for compatibility and incident
+diagnosis when no `transport-attempt` owns the route.
+
+In that legacy diagnostic mode, before the first `ego-browser` invocation,
+acquire the single local lease for
 the ChatGPT account-level draft seam. Use the immutable route that this
 coordinator has already chosen; `attempt-id` is a fresh ID for this pre-run
 fallback attempt:

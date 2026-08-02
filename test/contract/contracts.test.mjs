@@ -47,6 +47,17 @@ test("skill proves browser and provider readiness before preparing outbound sour
   assert.notEqual(transportGate, -1);
   assert.ok(transportGate < contextPreparation);
   const gate = instructions.slice(transportGate, contextPreparation);
+  const defaultAttempt = gate.indexOf("### Default transport-attempt interface");
+  const legacyGate = gate.indexOf("### Legacy low-level diagnostics");
+  assert.notEqual(defaultAttempt, -1);
+  assert.notEqual(legacyGate, -1);
+  assert.ok(defaultAttempt < legacyGate);
+  assert.match(gate, /transport-attempt \\\n+\s+--action start/);
+  assert.match(gate, /--action status/);
+  assert.match(gate, /intentionally never returns either capability/);
+  assert.match(gate, /TRANSPORT_ATTEMPT_PRIMARY_BUSY/);
+  assert.match(gate, /does not include an\s+Ego task-space identity/);
+  assert.match(gate, /Only this decision permits source\s+selection and capsule preparation/);
   assert.match(
     gate,
     /Before selecting outbound files, packing, scanning, creating a run, or\s+reserving a send/,
@@ -697,6 +708,7 @@ test("CLI exposes machine-readable help and version without repository context",
     help.json.data.commands,
     [
       "preflight",
+      "transport-attempt",
       "transport-gate",
       "ego-bootstrap-lease",
       "pack",

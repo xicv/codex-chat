@@ -28,6 +28,125 @@ conclusively unavailable before any source or send action. Do not use Chrome,
 another browser surface, an API, or a manual copy/paste relay as another
 fallback.
 
+### Default transport-attempt interface
+
+Use the deep `transport-attempt` interface for every new collaboration. It
+owns the primary circuit claim, the one permitted rediscovery, Ego bootstrap
+exclusion, readiness sequencing, immutable route binding, and private
+capabilities. Do not persist a returned gate or lease token in controller
+scripts: this interface intentionally never returns either capability.
+
+Choose one immutable `attemptId` and reuse the exact workspace, coordinator,
+work-unit, agent, and attempt identity on every command. Start or resume the
+attempt before any source selection:
+
+```bash
+node <skill>/scripts/codex-chat.mjs transport-attempt \
+  --action start \
+  --workspace-id <workspace-id> \
+  --coordinator-id <coordinator-id> \
+  --work-unit-id <work-unit-id> \
+  --agent-id <agent-id> \
+  --attempt-id <attempt-id> \
+  --primary-available <true-or-false> \
+  --ego-available <true-or-false>
+```
+
+`primary-available` means the installed Browser skill and its tool can be
+discovered; it does not claim that the transport is healthy. `ego-available`
+means the installed Ego skill and executable are available for the one
+permitted fallback. It never claims that authentication is complete. The user
+still owns every login, account, CAPTCHA, passkey, password, and two-factor
+action.
+
+Follow only the returned `decision` and `nextAction`:
+
+- `probe_primary`: run the exact zero-I/O
+  `nodeRepl.write("CODEX_CHAT_TRANSPORT_OK")` probe. Submit a strict observation
+  containing only `{"outcome":"success","probeNumber":1}`,
+  `{"outcome":"transport_closed","probeNumber":1}`, or
+  `{"outcome":"unavailable","probeNumber":1}` with
+  `--action observe_primary`. Use the exact `primaryProbeNumber` returned by
+  the attempt; a stale replay fails closed instead of consuming the next
+  probe. The first
+  closed result returns the one permitted rediscovery probe; the second records
+  the failure and selects Ego when it is available. `unavailable` neutrally
+  releases the primary claim before fallback. Never call `js_reset`, loop, or
+  switch to another `node_repl` surface. If another coordinator owns the probe,
+  `TRANSPORT_ATTEMPT_PRIMARY_BUSY` stops this attempt without starting Ego.
+- `observe_primary_page`: make one read-only Browser observation of the exact
+  target. Pass only a candidate target ID and the bounded readiness fields
+  accepted by `ego-readiness.mjs` using `--action observe_primary_page`. Never
+  include snapshot text, draft bytes, credentials, or page content.
+- `observe_ego_initial` or `observe_ego_fresh`: read
+  [ego-browser.md](references/ego-browser.md), then make only the requested
+  read-only Ego observation. Pass its candidate target ID and bounded readiness
+  fields with `--action observe_ego`. The interface holds and releases the Ego
+  bootstrap capability. An inherited draft is preserved untouched and at most
+  one distinct fresh target is considered.
+- `ready`: bind the returned adapter, target, provider origin/path, attempt, and
+  coordinator route for the complete run. Only this decision permits source
+  selection and capsule preparation.
+- `stop`: stop before source work, preserve any reported draft target, and
+  report the exact reason. Do not ask the user to clear, submit, or discard an
+  unknown draft.
+
+Pass observations through either a bounded JSON file with `--observation` or
+inline JSON with `--observation-json`. After interruption, run the same command
+with `--action status` and the exact owner identity. Status is read-only,
+returns the durable permitted next action, and never reruns either adapter.
+
+The primary Browser observation is deliberately narrow and does not include an
+Ego task-space identity:
+
+```json
+{
+  "candidateTargetId": "opaque-browser-target-id",
+  "readiness": {
+    "providerOrigin": "https://chatgpt.com",
+    "providerPath": "/",
+    "pageReady": true,
+    "composerReady": true,
+    "composerState": "empty",
+    "loginControlPresent": false,
+    "accountUiPresent": true,
+    "challengePresent": false
+  }
+}
+```
+
+The Ego observation additionally binds its numeric task space:
+
+```json
+{
+  "taskSpaceId": 7,
+  "candidateTargetId": "opaque-target-id",
+  "readiness": {
+    "providerOrigin": "https://chatgpt.com",
+    "providerPath": "/",
+    "pageReady": true,
+    "composerReady": true,
+    "composerState": "empty",
+    "loginControlPresent": false,
+    "accountUiPresent": true,
+    "challengePresent": false
+  }
+}
+```
+
+If the result is not `ready`, no source file may be selected, packed, scanned,
+hashed into a task envelope, or entered into run state. If any upload or send
+action may already have occurred, do not start or resume a pre-egress attempt;
+use the ambiguity and reconciliation rules for the existing run.
+
+### Legacy low-level diagnostics
+
+The low-level `transport-gate` and `ego-bootstrap-lease` commands remain for
+compatibility, focused tests, and incident diagnosis. Do not manually compose
+them for a normal new collaboration; `transport-attempt` is the normative
+controller and prevents raw capabilities and transition ordering from leaking
+into controller scripts.
+
 1. Claim the app-wide transport probe before discovering or calling the
    built-in Browser tool:
 

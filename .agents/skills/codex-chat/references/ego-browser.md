@@ -120,15 +120,17 @@ readiness attempt must:
    Preserve the inherited-draft tab. Do not retry, clear, overwrite, inspect,
    or submit the draft.
 
-Replace `<skill>` below with the exact current installed `codex-chat` skill
-directory. The browser adapter returns only bounded observations to the local
-`ego-readiness.mjs` decision core. That module rejects unknown fields and
-never accepts draft bytes; do not reproduce or modify its decisions inline.
+Replace `<skill>` below with the JSON-string-escaped absolute path of the exact
+current installed `codex-chat` skill directory. Put the path directly in the
+heredoc: Ego's isolated Node runtime does not inherit the invoking shell's
+custom environment variables. The browser adapter returns only bounded
+observations to the local `ego-readiness.mjs` decision core. That module
+rejects unknown fields and never accepts draft bytes; do not reproduce or
+modify its decisions inline.
 
 ```bash
-CODEX_CHAT_SKILL_DIR="<skill>" ego-browser nodejs <<'EOF'
-const skillDir = process.env.CODEX_CHAT_SKILL_DIR
-if (!skillDir) throw new Error("codex-chat skill directory is required")
+ego-browser nodejs <<'EOF'
+const skillDir = "<skill>"
 const { join } = await import("node:path")
 const { pathToFileURL } = await import("node:url")
 const readinessModulePath = join(
@@ -525,9 +527,8 @@ whole-space cleanup is requested. If no inherited draft was preserved, close
 the whole task space:
 
 ```bash
-CODEX_CHAT_SKILL_DIR="<skill>" ego-browser nodejs <<'EOF'
-const skillDir = process.env.CODEX_CHAT_SKILL_DIR
-if (!skillDir) throw new Error("codex-chat skill directory is required")
+ego-browser nodejs <<'EOF'
+const skillDir = "<skill>"
 const { join } = await import("node:path")
 const { pathToFileURL } = await import("node:url")
 const { planEgoCleanup } = await import(pathToFileURL(join(
@@ -561,9 +562,8 @@ collaborator tab by its exact `targetId`, then preserve the task space and
 original draft tab:
 
 ```bash
-CODEX_CHAT_SKILL_DIR="<skill>" ego-browser nodejs <<'EOF'
-const skillDir = process.env.CODEX_CHAT_SKILL_DIR
-if (!skillDir) throw new Error("codex-chat skill directory is required")
+ego-browser nodejs <<'EOF'
+const skillDir = "<skill>"
 const { join } = await import("node:path")
 const { pathToFileURL } = await import("node:url")
 const { planEgoCleanup } = await import(pathToFileURL(join(

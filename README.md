@@ -302,11 +302,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 162/162 |
+| Unit tests | 163/163 |
 | Contract tests | 35/35 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 3/3 |
-| Aggregate test gate | 205/205 |
+| Aggregate test gate | 206/206 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -376,7 +376,7 @@ directory. The CLI never replaces an existing artifact.
 | Command | Purpose |
 | --- | --- |
 | `preflight` | Validate source selection, state location, VCS metadata, and scanner availability |
-| `transport-gate` | Serialize primary-browser health probes, remember a closed host generation, neutrally release an unused claim, and verify that recovery changed the browser host before probing again |
+| `transport-gate` | Serialize primary-browser health probes, remember a closed host generation, neutrally release an unused claim, and allow one bounded half-open probe after a host restart or cooldown |
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
 | `transport-plan` | Create and scan a digest-bound size-aware composer/attachment plan without authorizing browser action |
 | `manifest` | Create and scan a typed `COLLAB_CONTEXT_MANIFEST_V2` provenance sidecar |
@@ -404,9 +404,11 @@ model label, agentic allowance, upload capability, and API budget separately.
   `js_reset` and another `node_repl`-backed surface are not recovery paths.
 - A shared transport circuit serializes this no-source probe across local
   coordinators. After a repeated `Transport closed`, later calls fail locally
-  without touching the closed transport until the browser-host PID/start
-  generation changes. This proves whether recovery actually restarted the
-  host; it cannot repair or guarantee the host implementation itself.
+  without touching the closed transport for five minutes and return an exact
+  retry time. A host-generation change permits an earlier probe; otherwise one
+  coordinator may claim a same-host half-open zero-egress probe after cooldown.
+  Failure restarts the cooldown, cooldown recovery never claims a restart, and
+  neither path authorizes source work by itself.
 - After a conclusive primary outage, an already-installed Ego Browser is the
   only fallback. It gets one isolated task space and one read-only readiness
   attempt. If login or verification is required, control returns to the user;

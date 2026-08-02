@@ -53,7 +53,10 @@ test("skill proves browser and provider readiness before preparing outbound sour
   );
   assert.match(gate, /transport-gate --action claim/);
   assert.match(gate, /If `probeAllowed` is false, do not call\s+`node_repl\/js`/);
-  assert.match(gate, /same_host_generation_failed/);
+  assert.match(gate, /same_host_cooldown_active/);
+  assert.match(gate, /same_host_cooldown_elapsed/);
+  assert.match(gate, /exact `reason` and `retryAfter`/);
+  assert.match(gate, /one serialized\s+zero-I\/O half-open probe/);
   assert.match(gate, /probe_in_progress/);
   assert.match(gate, /built-in Browser is the primary transport/);
   assert.match(
@@ -71,7 +74,7 @@ test("skill proves browser and provider readiness before preparing outbound sour
     gate,
     /Do\s+not switch to\s+another `node_repl`-backed surface/,
   );
-  assert.match(gate, /restart of the ChatGPT\s+desktop app/);
+  assert.match(gate, /full restart of\s+the ChatGPT desktop app/);
   assert.match(
     gate,
     /transport-gate \\\n\s+--action failure \\\n\s+--claim-token <claim-token>/,
@@ -289,7 +292,12 @@ test("Ego executes the local readiness and cleanup decision core", async () => {
   assert.notEqual(cleanupCall, -1);
   assert.notEqual(closeCall, -1);
   assert.notEqual(completeCall, -1);
-  assert.match(fallback, /process\.env\.CODEX_CHAT_SKILL_DIR/);
+  assert.doesNotMatch(fallback, /process\.env\.CODEX_CHAT_SKILL_DIR/);
+  assert.match(fallback, /const skillDir = "<skill>"/);
+  assert.match(
+    fallback,
+    /Ego's isolated Node runtime does not inherit the invoking shell's\s+custom environment variables/,
+  );
   assert.match(fallback, /ego-readiness\.mjs/);
   assert.ok(cleanupCall < closeCall);
   assert.ok(cleanupCall < completeCall);

@@ -70,7 +70,7 @@ test("desktop generation fails closed on unsupported platforms", async () => {
   );
 });
 
-test("a failed generation stays open until the browser host actually changes", async () => {
+test("a failed generation stays open during cooldown but permits a changed host", async () => {
   const transportStateDir = await tempDir("codex-chat-transport-gate-");
   const firstClaim = await transportGate({
     action: "claim",
@@ -108,7 +108,8 @@ test("a failed generation stays open until the browser host actually changes", a
     createToken: () => "unused",
   });
   assert.equal(unchanged.probeAllowed, false);
-  assert.equal(unchanged.reason, "same_host_generation_failed");
+  assert.equal(unchanged.reason, "same_host_cooldown_active");
+  assert.equal(unchanged.retryAfter, "2026-07-31T02:35:20.000Z");
   assert.equal(unchanged.restartVerified, false);
 
   const restarted = await transportGate({
@@ -122,6 +123,73 @@ test("a failed generation stays open until the browser host actually changes", a
   assert.equal(restarted.reason, "host_generation_changed");
   assert.equal(restarted.restartVerified, true);
   assert.equal(restarted.claimToken, "claim-b");
+});
+
+test("a failed host permits one serialized zero-egress probe after cooldown", async () => {
+  const transportStateDir = await tempDir("codex-chat-transport-cooldown-");
+  const common = {
+    transportStateDir,
+    generationProvider: generationProvider(PROCESS_TABLE_A),
+  };
+  const claimed = await transportGate({
+    action: "claim",
+    ...common,
+    clock: fixedClock("2026-07-31T02:30:00.000Z"),
+    createToken: () => "cooldown-first",
+  });
+  await transportGate({
+    action: "failure",
+    claimToken: claimed.claimToken,
+    ...common,
+    clock: fixedClock("2026-07-31T02:30:20.000Z"),
+  });
+
+  const coolingDown = await transportGate({
+    action: "claim",
+    ...common,
+    clock: fixedClock("2026-07-31T02:35:19.999Z"),
+    createToken: () => "unused",
+  });
+  assert.equal(coolingDown.probeAllowed, false);
+  assert.equal(coolingDown.reason, "same_host_cooldown_active");
+  assert.equal(coolingDown.retryAfter, "2026-07-31T02:35:20.000Z");
+
+  const halfOpen = await transportGate({
+    action: "claim",
+    ...common,
+    clock: fixedClock("2026-07-31T02:35:20.000Z"),
+    createToken: () => "cooldown-half-open",
+  });
+  assert.equal(halfOpen.probeAllowed, true);
+  assert.equal(halfOpen.reason, "same_host_cooldown_elapsed");
+  assert.equal(halfOpen.restartVerified, false);
+  assert.equal(halfOpen.retryAfter, null);
+  assert.equal(halfOpen.claimToken, "cooldown-half-open");
+
+  const concurrent = await transportGate({
+    action: "claim",
+    ...common,
+    clock: fixedClock("2026-07-31T02:35:21.000Z"),
+    createToken: () => "unused",
+  });
+  assert.equal(concurrent.probeAllowed, false);
+  assert.equal(concurrent.reason, "probe_in_progress");
+
+  await transportGate({
+    action: "failure",
+    claimToken: halfOpen.claimToken,
+    ...common,
+    clock: fixedClock("2026-07-31T02:35:30.000Z"),
+  });
+  const coolingDownAgain = await transportGate({
+    action: "claim",
+    ...common,
+    clock: fixedClock("2026-07-31T02:35:31.000Z"),
+    createToken: () => "unused",
+  });
+  assert.equal(coolingDownAgain.probeAllowed, false);
+  assert.equal(coolingDownAgain.reason, "same_host_cooldown_active");
+  assert.equal(coolingDownAgain.retryAfter, "2026-07-31T02:40:30.000Z");
 });
 
 test("a successful probe closes the breaker and permits a later serialized probe", async () => {

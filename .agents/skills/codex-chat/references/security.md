@@ -159,7 +159,11 @@ The built-in Browser is primary. A `Transport closed` result from its
 by that transport. Reacquire the tool once and repeat one no-I/O probe. A
 repeated failure opens the app-wide circuit for the exact
 `codex-code-mode-host` generation. Later coordinators do not call that
-generation again.
+generation during a fixed five-minute cooldown. The exact retry time is
+reported; after it elapses, one file-lock-serialized coordinator may perform
+one zero-I/O half-open probe without claiming the host restarted. Failure
+restarts the cooldown. This probe carries no repository context and grants no
+source, upload, send, fallback-switch, or resend authority.
 
 Claim tokens, a two-minute expiry, and a local file lock prevent one
 coordinator from completing another coordinator's probe. A missing primary

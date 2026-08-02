@@ -16,9 +16,12 @@ denies Ego fallback, because a second browser writer could cross the active
 coordinator.
 
 An open circuit for the current browser-host generation denies the probe
-without calling the already-closed tool transport. The circuit becomes
-half-open only after the browser-host process generation changes. A successful
-no-I/O probe plus supported read-only browser and provider checks closes it. A
+without calling the already-closed tool transport during a fixed five-minute
+cooldown and returns the exact `retryAfter`. The circuit becomes half-open
+either after the browser-host process generation changes or, without claiming
+a restart, for one serialized zero-I/O probe after the cooldown. A repeated
+same-host failure restarts the cooldown. A successful no-I/O probe plus
+supported read-only browser and provider checks closes it. A
 non-transport provider blocker also closes it after browser health is proven,
 while a repeated `Transport closed` result opens it. Claim completion is
 token- and generation-bound, so a stale coordinator cannot close or trip
@@ -35,8 +38,10 @@ If the `node_repl` tool transport returns `Transport closed`, the controller
 may rediscover the tool once and repeat one no-I/O probe. It does not call
 `js_reset`, switch to another surface that depends on the same transport, or
 loop retries. A repeated failure durably opens the claimed circuit before
-fallback. A later controller reports the saved failure without probing again
-until a different browser-host generation is observed.
+fallback. A later controller reports the saved failure and exact retry time
+without probing during the cooldown. After that instant, only the coordinator
+that atomically claims the half-open slot may perform one new no-I/O probe.
+Neither cooldown expiry nor a claim permits source preparation or send.
 
 After a conclusive primary outage, an installed Ego skill and CLI may perform
 one read-only readiness attempt in one opaque, randomly named task space. Before

@@ -36,14 +36,21 @@ fallback.
    ```
 
    Keep the returned `claimToken`. If `probeAllowed` is false, do not call
-   `node_repl/js`. A `same_host_generation_failed` result means the exact
-   browser-host generation already returned `Transport closed` and no verified
-   host restart has occurred; `desktop_generation_unsupported` or
+   `node_repl/js`. A `same_host_cooldown_active` result means the exact
+   browser-host generation recently returned `Transport closed`; report its
+   exact `reason` and `retryAfter` and do not probe before that instant. After
+   the five-minute cooldown, one coordinator may receive
+   `same_host_cooldown_elapsed` with `probeAllowed: true` for one serialized
+   zero-I/O half-open probe even when no restart was observed. A
+   `desktop_generation_unsupported` or
    `desktop_host_not_ready` means the primary cannot pass this gate. These are
    conclusive primary unavailability classifications for this attempt. A
    `probe_in_progress` result instead means another coordinator owns the
    bounded primary health probe: report it and stop without starting Ego,
-   because a second browser writer could cross the active coordinator.
+   because a second browser writer could cross the active coordinator. Never
+   replace a successful gate decision envelope with the vague statement that
+   no usable receipt was returned; preserve the exact `reason`, `retryAfter`,
+   `probeAllowed`, and `restartVerified` fields.
 2. Follow the installed Browser skill to expose `node_repl/js` through tool
    discovery. Run one no-I/O probe:
 
@@ -96,12 +103,15 @@ node <skill>/scripts/codex-chat.mjs transport-gate \
 ```
 
 This durable record suppresses every later probe from every coordinator sharing
-the same desktop login until `codex-code-mode-host` has a different process
-generation. Preserve the exact error and recorded ChatGPT and browser-host
-PIDs/start times so a full restart is verifiable rather than assumed. If Ego
-is unavailable, recommend quitting and reopening the app after other active
-tasks finish—a full restart of the ChatGPT desktop app—before a later primary
-attempt.
+the same desktop login until either `codex-code-mode-host` has a different
+process generation or the fixed five-minute cooldown has elapsed. The first
+eligible coordinator then owns one half-open zero-I/O probe; a repeated failure
+restarts the cooldown. Cooldown expiry is not restart proof and never authorizes
+source work by itself. Preserve the exact error and recorded ChatGPT and
+browser-host PIDs/start times so a full restart is verifiable rather than
+assumed. If Ego is unavailable, report the exact retry time; a full restart of
+the ChatGPT desktop app remains an optional way to make an earlier primary
+attempt after other active tasks finish.
 
 After one of the conclusive primary-unavailability classifications above,
 read [ego-browser.md](references/ego-browser.md). Before invoking Ego, acquire

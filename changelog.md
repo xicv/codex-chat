@@ -56,6 +56,13 @@ that introduced each change; merge-only commits are omitted.
 
 ### Fixed
 
+- A pre-send `Transport closed` circuit no longer blocks the same healthy host
+  generation forever. It now returns an exact five-minute retry time and
+  permits one serialized zero-egress half-open probe after cooldown, while a
+  repeated failure restarts the cooldown and never authorizes source or resend.
+- Ego readiness and cleanup examples now embed the installed skill path in the
+  isolated runtime instead of relying on shell environment propagation that
+  Ego does not preserve.
 - Duplicate skill selector guidance now keeps the personal installation
   canonical while disabling only this repository's authoring copy.
 - Browser transport failures no longer spend time building and scanning a

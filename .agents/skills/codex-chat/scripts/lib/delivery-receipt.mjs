@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
 import {
   lstat,
-  open,
   realpath,
 } from "node:fs/promises";
 import path from "node:path";
@@ -14,6 +12,7 @@ import {
 } from "./immutable-evidence-store.mjs";
 import { LIMITS_V2 } from "./limits.mjs";
 import { loadRun, statePaths } from "./state.mjs";
+import { readTrustedFileSnapshot } from "./trusted-file-snapshot.mjs";
 
 const {
   maxManifestBytes: MAX_MANIFEST_BYTES,
@@ -289,47 +288,23 @@ function validManifestRepresentation(value) {
 }
 
 async function readRealFile(filePath, label, maxBytes) {
-  const absolute = path.resolve(filePath);
-  const handle = await open(
-    absolute,
-    constants.O_RDONLY | constants.O_NOFOLLOW,
-  ).catch(() => null);
-  if (!handle) {
-    fail(`${label}_INVALID`, `${label.replaceAll("_", " ")} must be a real file.`);
-  }
   try {
-    const before = await handle.stat();
-    if (!before.isFile()) {
-      fail(
-        `${label}_INVALID`,
-        `${label.replaceAll("_", " ")} must be a real file.`,
-      );
-    }
-    if (before.size > maxBytes) {
+    return (await readTrustedFileSnapshot(filePath, { maxBytes })).bytes;
+  } catch (error) {
+    if (!error?.code?.startsWith("TRUSTED_FILE_")) throw error;
+    if (error.code === "TRUSTED_FILE_TOO_LARGE") {
       fail(
         `${label}_TOO_LARGE`,
         `${label.replaceAll("_", " ")} exceeds ${maxBytes} bytes.`,
       );
     }
-    const bytes = await handle.readFile();
-    const after = await handle.stat();
-    if (
-      bytes.byteLength > maxBytes ||
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      before.ctimeMs !== after.ctimeMs ||
-      bytes.byteLength !== after.size
-    ) {
+    if (error.code === "TRUSTED_FILE_CHANGED") {
       fail(
         `${label}_CHANGED`,
         `${label.replaceAll("_", " ")} changed while it was read.`,
       );
     }
-    return bytes;
-  } finally {
-    await handle.close();
+    fail(`${label}_INVALID`, `${label.replaceAll("_", " ")} must be a real file.`);
   }
 }
 

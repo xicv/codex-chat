@@ -206,6 +206,14 @@ content digests, and cross-field strategy invariants. Unsupported versions,
 noncanonical JSON, schema drift, and relational contradictions have distinct
 stable errors.
 
+`trusted-file-snapshot.mjs` is the shared read boundary for transport inputs,
+terminal captures, delivery evidence, and immutable capsule objects. It opens
+the final component without following links, reads in allocation-safe bounded
+chunks, and requires the descriptor and final path to retain the same device,
+inode, size, mode, modification time, and change time. Callers retain their
+domain-specific error contracts while inheriting one strict file-identity
+implementation.
+
 After preparation and again immediately before browser mutation,
 `capsule-validate` opens the existing private store without creating paths,
 binds the caller's expected receipt SHA-256, no-follow reads and hashes every

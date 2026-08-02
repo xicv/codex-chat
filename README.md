@@ -132,6 +132,10 @@ use a session authenticated by the user.
 17. **Decode protocols in one place.** A strict versioned codec module owns
     canonical encoding, exact-key validation, version dispatch, size limits,
     and relational invariants for the complete outbound capsule family.
+18. **Snapshot untrusted files through one gate.** Outbound inputs and durable
+    evidence use one no-follow, byte-bounded reader that verifies regular-file
+    type, optional private mode, descriptor/path identity, and unchanged
+    metadata before returning bytes.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
@@ -309,11 +313,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 214/214 |
+| Unit tests | 220/220 |
 | Contract tests | 38/38 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 3/3 |
-| Aggregate test gate | 260/260 |
+| Aggregate test gate | 266/266 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |

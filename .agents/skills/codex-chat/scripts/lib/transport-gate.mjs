@@ -21,6 +21,7 @@ const SCHEMA = "CODEX_CHAT_TRANSPORT_GATE_V1";
 const CLAIM_TTL_MS = 120_000;
 const REPROBE_COOLDOWN_MS = 5 * 60_000;
 const MAX_RECORD_BYTES = 16 * 1024;
+const MAX_RESOLUTION_RECEIPTS = 16;
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -156,7 +157,23 @@ function validProcess(value) {
   );
 }
 
+function validResolutionReceipt(value) {
+  return value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 5 &&
+    ["tokenSha256", "action", "generationId", "hostGenerationId", "observedAt"]
+      .every((key) => Object.hasOwn(value, key)) &&
+    /^[a-f0-9]{64}$/u.test(value.tokenSha256 ?? "") &&
+    ["success", "failure", "release"].includes(value.action) &&
+    /^[a-f0-9]{64}$/u.test(value.generationId ?? "") &&
+    /^[a-f0-9]{64}$/u.test(value.hostGenerationId ?? "") &&
+    typeof value.observedAt === "string" &&
+    Number.isFinite(Date.parse(value.observedAt));
+}
+
 function validateRecord(record) {
+  const resolutionReceipts = record?.resolutionReceipts ?? [];
   const claimStateValid = record?.status === "half_open"
     ? (
         typeof record.claimToken === "string" &&
@@ -180,6 +197,9 @@ function validateRecord(record) {
     /^[a-f0-9]{64}$/u.test(record.hostGenerationId) &&
     validProcess(record.generation?.app) &&
     validProcess(record.generation?.host) &&
+    Array.isArray(resolutionReceipts) &&
+    resolutionReceipts.length <= MAX_RESOLUTION_RECEIPTS &&
+    resolutionReceipts.every(validResolutionReceipt) &&
     claimStateValid &&
     (record.lastFailure === null || (
       typeof record.lastFailure?.observedAt === "string" &&
@@ -196,7 +216,7 @@ function validateRecord(record) {
       "Transport gate state is malformed or unsupported.",
     );
   }
-  return record;
+  return { ...record, resolutionReceipts };
 }
 
 async function readRecord(filePath) {
@@ -320,6 +340,67 @@ function buildClaimRecord({
     claimExpiresAt: now.getTime() + CLAIM_TTL_MS,
     lastFailure: current?.lastFailure ?? null,
     lastSuccessAt: current?.lastSuccessAt ?? null,
+    resolutionReceipts: current?.resolutionReceipts ?? [],
+  };
+}
+
+function findResolution(record, claimToken, action) {
+  if (typeof claimToken !== "string" || claimToken.length === 0) return null;
+  const tokenSha256 = sha256(claimToken);
+  return record?.resolutionReceipts?.findLast((receipt) => (
+    receipt.tokenSha256 === tokenSha256 && receipt.action === action
+  )) ?? null;
+}
+
+function appendResolution(record, { claimToken, action, observedAt }) {
+  return [
+    ...(record.resolutionReceipts ?? []),
+    {
+      tokenSha256: sha256(claimToken),
+      action,
+      generationId: record.generationId,
+      hostGenerationId: record.hostGenerationId,
+      observedAt,
+    },
+  ].slice(-MAX_RESOLUTION_RECEIPTS);
+}
+
+function replayedResolutionResult(current, receipt) {
+  const succeeded = receipt.action === "success";
+  const generationStillCurrent =
+    current.generationId === receipt.generationId &&
+    current.hostGenerationId === receipt.hostGenerationId;
+  return {
+    gateState: receipt.action === "failure" ? "open" : succeeded ? "closed" : "idle",
+    probeAllowed: succeeded,
+    reason: receipt.action === "failure"
+      ? "transport_closed_recorded"
+      : succeeded
+        ? "probe_succeeded"
+        : "probe_released",
+    restartVerified: null,
+    claimToken: null,
+    generation: generationStillCurrent
+      ? {
+          ...current.generation,
+          supported: true,
+          ready: receipt.action === "release" ? null : true,
+          reason: "claimed_generation_resolution_replayed",
+          generationId: receipt.generationId,
+          hostGenerationId: receipt.hostGenerationId,
+        }
+      : {
+          platform: current.generation.platform,
+          supported: true,
+          ready: null,
+          reason: "resolved_generation_no_longer_current",
+          app: null,
+          host: null,
+          generationId: receipt.generationId,
+          hostGenerationId: receipt.hostGenerationId,
+        },
+    previousFailure: generationStillCurrent ? current.lastFailure : null,
+    retryAfter: null,
   };
 }
 
@@ -364,6 +445,19 @@ export async function transportGate({
       "Transport gate action must be claim, success, failure, or release.",
     );
   }
+  if (
+    claimToken !== null &&
+    (
+      typeof claimToken !== "string" ||
+      claimToken.length < 1 ||
+      claimToken.length > 128
+    )
+  ) {
+    fail(
+      "TRANSPORT_GATE_TOKEN_INVALID",
+      "Transport gate claim token is invalid.",
+    );
+  }
   const canonicalRoot = await prepareDirectory(path.resolve(transportStateDir));
   const paths = pathsFor(canonicalRoot);
   return withOwnedFileLock({
@@ -372,6 +466,13 @@ export async function transportGate({
     busyMessage: "Another coordinator is updating the transport gate.",
   }, async () => {
     const current = await readRecord(paths.record);
+
+    const priorResolution = action === "claim"
+      ? null
+      : findResolution(current, claimToken, action);
+    if (priorResolution !== null) {
+      return replayedResolutionResult(current, priorResolution);
+    }
 
     if (action === "release") {
       if (
@@ -390,6 +491,11 @@ export async function transportGate({
         claimToken: null,
         claimedAt: null,
         claimExpiresAt: null,
+        resolutionReceipts: appendResolution(current, {
+          claimToken,
+          action,
+          observedAt: nowFrom(clock).toISOString(),
+        }),
       };
       await atomicWrite(paths.record, next);
       return {
@@ -462,6 +568,16 @@ export async function transportGate({
         current.hostGenerationId === generation.hostGenerationId &&
         current.claimExpiresAt > now.getTime()
       ) {
+        if (claimToken === current.claimToken) {
+          return claimResult({
+            probeAllowed: true,
+            reason: "probe_claim_resumed",
+            restartVerified: false,
+            generation,
+            claimToken: current.claimToken,
+            current,
+          });
+        }
         return claimResult({
           probeAllowed: false,
           reason: "probe_in_progress",
@@ -471,7 +587,7 @@ export async function transportGate({
         });
       }
 
-      const token = createToken();
+      const token = claimToken ?? createToken();
       if (
         typeof token !== "string" ||
         token.length < 1 ||
@@ -554,6 +670,11 @@ export async function transportGate({
       lastSuccessAt: action === "success"
         ? now.toISOString()
         : current.lastSuccessAt,
+      resolutionReceipts: appendResolution(current, {
+        claimToken,
+        action,
+        observedAt: now.toISOString(),
+      }),
     };
     await atomicWrite(paths.record, next);
     return {

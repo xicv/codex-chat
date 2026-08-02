@@ -322,6 +322,57 @@ test("stale claim tokens cannot close or trip another coordinator's gate", async
     }),
     { code: "TRANSPORT_GATE_CLAIM_MISMATCH" },
   );
+  await assert.rejects(
+    transportGate({
+      action: "release",
+      claimToken: "x".repeat(129),
+      ...common,
+      clock: fixedClock("2026-07-31T02:30:01.000Z"),
+    }),
+    { code: "TRANSPORT_GATE_TOKEN_INVALID" },
+  );
+});
+
+test("an exact resolved claim replay cannot mutate a newer coordinator's active probe", async () => {
+  const transportStateDir = await tempDir("codex-chat-transport-resolution-replay-");
+  const common = {
+    transportStateDir,
+    generationProvider: generationProvider(PROCESS_TABLE_A),
+  };
+  await transportGate({
+    action: "claim",
+    ...common,
+    clock: fixedClock("2026-07-31T02:31:00.000Z"),
+    createToken: () => "resolved-owner-token",
+  });
+  await transportGate({
+    action: "success",
+    claimToken: "resolved-owner-token",
+    ...common,
+    clock: fixedClock("2026-07-31T02:31:01.000Z"),
+  });
+  await transportGate({
+    action: "claim",
+    ...common,
+    clock: fixedClock("2026-07-31T02:31:02.000Z"),
+    createToken: () => "newer-owner-token",
+  });
+
+  const replayed = await transportGate({
+    action: "success",
+    claimToken: "resolved-owner-token",
+    ...common,
+    clock: fixedClock("2026-07-31T02:31:03.000Z"),
+  });
+  assert.equal(replayed.reason, "probe_succeeded");
+
+  const newer = await transportGate({
+    action: "failure",
+    claimToken: "newer-owner-token",
+    ...common,
+    clock: fixedClock("2026-07-31T02:31:04.000Z"),
+  });
+  assert.equal(newer.reason, "transport_closed_recorded");
 });
 
 test("transport state refuses a symlinked gate record", async () => {

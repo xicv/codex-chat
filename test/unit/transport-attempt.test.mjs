@@ -677,6 +677,231 @@ test("a missing primary tool neutrally releases its claim before Ego fallback", 
   assert.equal(gate.probeAllowed, true);
 });
 
+test("a primary success resumes after the gate commits but the attempt write crashes", async () => {
+  const transportStateDir = await tempDir("codex-chat-attempt-primary-crash-");
+  const baseDependencies = {
+    processTable: async () => PROCESS_TABLE,
+    clock: () => new Date("2026-08-02T10:12:00.000Z"),
+    createToken: () => "private-primary-crash-claim",
+  };
+  await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner: { ...OWNER, attemptId: "attempt-primary-crash" },
+    availability: { primary: true, ego: false },
+    dependencies: baseDependencies,
+  });
+
+  await assert.rejects(
+    advanceTransportAttempt({
+      action: "observe_primary",
+      transportStateDir,
+      owner: { ...OWNER, attemptId: "attempt-primary-crash" },
+      observation: { outcome: "success", probeNumber: 1 },
+      dependencies: {
+        ...baseDependencies,
+        afterSideEffect: (kind) => {
+          if (kind === "gate_success") throw new Error("SIMULATED_CRASH");
+        },
+      },
+    }),
+    /SIMULATED_CRASH/u,
+  );
+
+  const resumed = await advanceTransportAttempt({
+    action: "observe_primary",
+    transportStateDir,
+    owner: { ...OWNER, attemptId: "attempt-primary-crash" },
+    observation: { outcome: "success", probeNumber: 1 },
+    dependencies: baseDependencies,
+  });
+  assert.equal(resumed.phase, "primary_readiness_pending");
+  assert.equal(resumed.sequence, 2);
+});
+
+test("a primary claim resumes after the gate commits but the initial attempt write crashes", async () => {
+  const transportStateDir = await tempDir("codex-chat-attempt-primary-claim-crash-");
+  const owner = { ...OWNER, attemptId: "attempt-primary-claim-crash" };
+  const baseDependencies = {
+    processTable: async () => PROCESS_TABLE,
+    clock: () => new Date("2026-08-02T10:12:30.000Z"),
+    createToken: () => "private-primary-claim-crash-token",
+  };
+
+  await assert.rejects(advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner,
+    availability: { primary: true, ego: true },
+    dependencies: {
+      ...baseDependencies,
+      afterSideEffect: (kind) => {
+        if (kind === "gate_claim") throw new Error("SIMULATED_CRASH");
+      },
+    },
+  }), /SIMULATED_CRASH/u);
+
+  await assert.rejects(advanceTransportAttempt({
+    action: "observe_primary",
+    transportStateDir,
+    owner,
+    observation: { outcome: "unavailable", probeNumber: 2 },
+    dependencies: baseDependencies,
+  }), { code: "TRANSPORT_ATTEMPT_RECOVERY_REQUIRED" });
+
+  const resumed = await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner,
+    availability: { primary: true, ego: true },
+    dependencies: baseDependencies,
+  });
+  assert.equal(resumed.phase, "primary_probe_pending");
+  assert.equal(resumed.primaryProbeNumber, 1);
+});
+
+test("an Ego fallback acquisition resumes after gate failure and lease commit crashes", async () => {
+  const transportStateDir = await tempDir("codex-chat-attempt-fallback-crash-");
+  const owner = { ...OWNER, attemptId: "attempt-fallback-crash" };
+  const baseDependencies = {
+    processTable: async () => PROCESS_TABLE,
+    clock: () => new Date("2026-08-02T10:12:45.000Z"),
+    createToken: () => "private-fallback-crash-claim",
+    createEgoToken: () => "private-fallback-crash-ego-token",
+    createEgoLeaseId: () => "fallback-crash-ego-lease",
+  };
+  await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner,
+    availability: { primary: true, ego: true },
+    dependencies: baseDependencies,
+  });
+  await advanceTransportAttempt({
+    action: "observe_primary",
+    transportStateDir,
+    owner,
+    observation: { outcome: "transport_closed", probeNumber: 1 },
+    dependencies: baseDependencies,
+  });
+  const secondFailure = { outcome: "transport_closed", probeNumber: 2 };
+
+  await assert.rejects(advanceTransportAttempt({
+    action: "observe_primary",
+    transportStateDir,
+    owner,
+    observation: secondFailure,
+    dependencies: {
+      ...baseDependencies,
+      afterSideEffect: (kind) => {
+        if (kind === "ego_acquire") throw new Error("SIMULATED_CRASH");
+      },
+    },
+  }), /SIMULATED_CRASH/u);
+
+  await assert.rejects(advanceTransportAttempt({
+    action: "observe_primary",
+    transportStateDir,
+    owner,
+    observation: { outcome: "unavailable", probeNumber: 2 },
+    dependencies: baseDependencies,
+  }), { code: "TRANSPORT_ATTEMPT_RECOVERY_REQUIRED" });
+
+  const resumed = await advanceTransportAttempt({
+    action: "observe_primary",
+    transportStateDir,
+    owner,
+    observation: secondFailure,
+    dependencies: baseDependencies,
+  });
+  assert.equal(resumed.phase, "ego_readiness_pending");
+  assert.equal(resumed.sequence, 3);
+});
+
+test("an Ego acquisition resumes after the lease commits but the attempt write crashes", async () => {
+  const transportStateDir = await tempDir("codex-chat-attempt-ego-acquire-crash-");
+  const baseDependencies = {
+    clock: () => new Date("2026-08-02T10:13:00.000Z"),
+    createEgoToken: () => "private-ego-acquire-crash-token",
+    createEgoLeaseId: () => "ego-acquire-crash-lease",
+  };
+
+  await assert.rejects(
+    advanceTransportAttempt({
+      action: "start",
+      transportStateDir,
+      owner: { ...OWNER, attemptId: "attempt-ego-acquire-crash" },
+      availability: { primary: false, ego: true },
+      dependencies: {
+        ...baseDependencies,
+        afterSideEffect: (kind) => {
+          if (kind === "ego_acquire") throw new Error("SIMULATED_CRASH");
+        },
+      },
+    }),
+    /SIMULATED_CRASH/u,
+  );
+
+  const resumed = await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner: { ...OWNER, attemptId: "attempt-ego-acquire-crash" },
+    availability: { primary: false, ego: true },
+    dependencies: baseDependencies,
+  });
+  assert.equal(resumed.phase, "ego_readiness_pending");
+  assert.equal(resumed.sequence, 1);
+});
+
+test("an Ego release resumes after the lease commits but the terminal attempt write crashes", async () => {
+  const transportStateDir = await tempDir("codex-chat-attempt-ego-release-crash-");
+  const owner = { ...OWNER, attemptId: "attempt-ego-release-crash" };
+  const baseDependencies = {
+    clock: () => new Date("2026-08-02T10:14:00.000Z"),
+    createEgoToken: () => "private-ego-release-crash-token",
+    createEgoLeaseId: () => "ego-release-crash-lease",
+  };
+  await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner,
+    availability: { primary: false, ego: true },
+    dependencies: baseDependencies,
+  });
+  const observation = {
+    taskSpaceId: 9,
+    candidateTargetId: "ego-crash-target",
+    readiness: EMPTY_EGO_OBSERVATION,
+  };
+
+  await assert.rejects(
+    advanceTransportAttempt({
+      action: "observe_ego",
+      transportStateDir,
+      owner,
+      observation,
+      dependencies: {
+        ...baseDependencies,
+        afterSideEffect: (kind) => {
+          if (kind === "ego_release") throw new Error("SIMULATED_CRASH");
+        },
+      },
+    }),
+    /SIMULATED_CRASH/u,
+  );
+
+  const resumed = await advanceTransportAttempt({
+    action: "observe_ego",
+    transportStateDir,
+    owner,
+    observation,
+    dependencies: baseDependencies,
+  });
+  assert.equal(resumed.phase, "ready");
+  assert.equal(resumed.targetId, "ego-crash-target");
+  assert.equal(resumed.sequence, 2);
+});
+
 test("transport attempts reject a symlinked transport-state root", async () => {
   const realState = await tempDir("codex-chat-attempt-real-state-");
   const parent = await tempDir("codex-chat-attempt-linked-state-");

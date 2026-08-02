@@ -22,6 +22,7 @@ import { LIMITS_EGO_BOOTSTRAP_V1 } from "./limits.mjs";
 const SCHEMA = "CODEX_CHAT_EGO_BOOTSTRAP_LEASE_V1";
 const PROTOCOL_VERSION = 1;
 const MAX_RECORD_BYTES = 32 * 1024;
+const MAX_RELEASE_RECEIPTS = 16;
 const {
   defaultTtlMs: DEFAULT_TTL_MS,
   minTtlMs: MIN_TTL_MS,
@@ -165,6 +166,34 @@ async function prepareDirectory(root) {
   return realpath(root);
 }
 
+function validReleaseReceipt(value) {
+  const acquiredAt = Date.parse(value?.acquiredAt);
+  const releasedAt = Date.parse(value?.releasedAt);
+  const expiresAt = Date.parse(value?.expiresAt);
+  return value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 7 &&
+    [
+      "leaseId",
+      "owner",
+      "tokenSha256",
+      "generation",
+      "acquiredAt",
+      "releasedAt",
+      "expiresAt",
+    ].every((key) => Object.hasOwn(value, key)) &&
+    validIdentifier(value.leaseId) &&
+    ownerIsValid(value.owner) &&
+    /^[a-f0-9]{64}$/u.test(value.tokenSha256 ?? "") &&
+    Number.isSafeInteger(value.generation) &&
+    value.generation > 0 &&
+    [value.acquiredAt, value.releasedAt, value.expiresAt]
+      .every((date) => typeof date === "string" && Number.isFinite(Date.parse(date))) &&
+    releasedAt >= acquiredAt &&
+    expiresAt > acquiredAt;
+}
+
 function validateRecord(value) {
   const allowedKeys = new Set([
     "schema",
@@ -178,8 +207,10 @@ function validateRecord(value) {
     "acquiredAt",
     "updatedAt",
     "expiresAt",
+    "releaseReceipts",
     "leaseDigest",
   ]);
+  const releaseReceipts = value?.releaseReceipts ?? [];
   const { leaseDigest, ...unsigned } = value ?? {};
   const activeTokenValid = value?.status === "active"
     ? typeof value.tokenSha256 === "string" &&
@@ -190,6 +221,9 @@ function validateRecord(value) {
     value.schema !== SCHEMA ||
     value.protocolVersion !== PROTOCOL_VERSION ||
     Object.keys(value).some((key) => !allowedKeys.has(key)) ||
+    !Array.isArray(releaseReceipts) ||
+    releaseReceipts.length > MAX_RELEASE_RECEIPTS ||
+    !releaseReceipts.every(validReleaseReceipt) ||
     !same(value.descriptor, DESCRIPTOR) ||
     !["active", "released"].includes(value.status) ||
     !validIdentifier(value.leaseId) ||
@@ -212,7 +246,7 @@ function validateRecord(value) {
       "Ego bootstrap lease state is malformed or unsupported.",
     );
   }
-  return value;
+  return { ...value, releaseReceipts };
 }
 
 async function readRecord(filePath) {
@@ -309,6 +343,7 @@ function buildRecord({
   acquiredAt,
   updatedAt,
   expiresAt,
+  releaseReceipts = [],
 }) {
   const body = {
     schema: SCHEMA,
@@ -322,8 +357,54 @@ function buildRecord({
     acquiredAt,
     updatedAt,
     expiresAt,
+    releaseReceipts,
   };
   return { ...body, leaseDigest: sha256(stable(body)) };
+}
+
+function findReleaseReceipt(record, { owner, leaseId, leaseToken }) {
+  if (
+    typeof leaseId !== "string" ||
+    typeof leaseToken !== "string" ||
+    !ownerIsValid(owner)
+  ) return null;
+  const tokenSha256 = sha256(leaseToken);
+  return record?.releaseReceipts?.findLast((receipt) => (
+    receipt.leaseId === leaseId &&
+    same(receipt.owner, owner) &&
+    receipt.tokenSha256 === tokenSha256
+  )) ?? null;
+}
+
+function releasedResult(receipt) {
+  return {
+    acquired: false,
+    reason: "bootstrap_released",
+    descriptor: DESCRIPTOR,
+    leaseId: receipt.leaseId,
+    leaseToken: null,
+    owner: receipt.owner,
+    generation: receipt.generation,
+    acquiredAt: receipt.acquiredAt,
+    updatedAt: receipt.releasedAt,
+    expiresAt: receipt.expiresAt,
+    retryAfter: null,
+  };
+}
+
+function appendReleaseReceipt(record, { leaseToken, releasedAt }) {
+  return [
+    ...(record.releaseReceipts ?? []),
+    {
+      leaseId: record.leaseId,
+      owner: record.owner,
+      tokenSha256: sha256(leaseToken),
+      generation: record.generation,
+      acquiredAt: record.acquiredAt,
+      releasedAt,
+      expiresAt: record.expiresAt,
+    },
+  ].slice(-MAX_RELEASE_RECEIPTS);
 }
 
 function publicResult(record, {
@@ -380,7 +461,10 @@ export async function egoBootstrapLease({
     );
   }
   if (
-    (action === "acquire" && (leaseId !== null || leaseToken !== null)) ||
+    (
+      action === "acquire" &&
+      ((leaseId === null) !== (leaseToken === null))
+    ) ||
     (action === "release" && ttlMs !== null)
   ) {
     fail(
@@ -404,10 +488,29 @@ export async function egoBootstrapLease({
     const now = nowFrom(clock);
 
     if (action === "acquire") {
+      const prescribed = leaseId !== null;
+      const token = validateLeaseToken(
+        prescribed ? leaseToken : createToken(),
+      );
+      const nextLeaseId = validateLeaseId(
+        prescribed ? leaseId : createLeaseId(),
+        prescribed ? "leaseId" : "generated leaseId",
+      );
       if (
         current?.status === "active" &&
         Date.parse(current.expiresAt) > now.getTime()
       ) {
+        if (
+          current.leaseId === nextLeaseId &&
+          same(current.owner, validatedOwner) &&
+          tokenMatches(token, current.tokenSha256)
+        ) {
+          return publicResult(current, {
+            acquired: true,
+            reason: "bootstrap_acquire_resumed",
+            leaseToken: token,
+          });
+        }
         return publicResult(current, {
           acquired: false,
           reason: same(current.owner, validatedOwner)
@@ -416,11 +519,6 @@ export async function egoBootstrapLease({
         });
       }
 
-      const token = validateLeaseToken(createToken());
-      const nextLeaseId = validateLeaseId(
-        createLeaseId(),
-        "generated leaseId",
-      );
       const acquiredAt = now.toISOString();
       const next = buildRecord({
         status: "active",
@@ -431,6 +529,7 @@ export async function egoBootstrapLease({
         acquiredAt,
         updatedAt: acquiredAt,
         expiresAt: new Date(now.getTime() + effectiveTtlMs).toISOString(),
+        releaseReceipts: current?.releaseReceipts ?? [],
       });
       await atomicWrite(paths.record, next);
       return publicResult(next, {
@@ -443,6 +542,21 @@ export async function egoBootstrapLease({
         leaseToken: token,
       });
     }
+
+    const validatedReleaseId = action === "release"
+      ? validateLeaseId(leaseId)
+      : null;
+    const validatedReleaseToken = action === "release"
+      ? validateLeaseToken(leaseToken)
+      : null;
+    const priorRelease = action === "release"
+      ? findReleaseReceipt(current, {
+          owner: validatedOwner,
+          leaseId: validatedReleaseId,
+          leaseToken: validatedReleaseToken,
+        })
+      : null;
+    if (priorRelease !== null) return releasedResult(priorRelease);
 
     assertOwnership(current, {
       owner: validatedOwner,
@@ -463,6 +577,7 @@ export async function egoBootstrapLease({
         tokenSha256: current.tokenSha256,
         updatedAt: now.toISOString(),
         expiresAt: new Date(now.getTime() + effectiveTtlMs).toISOString(),
+        releaseReceipts: current.releaseReceipts,
       });
       await atomicWrite(paths.record, next);
       return publicResult(next, {
@@ -472,11 +587,16 @@ export async function egoBootstrapLease({
       });
     }
 
+    const releasedAt = now.toISOString();
     const next = buildRecord({
       ...current,
       status: "released",
       tokenSha256: null,
-      updatedAt: now.toISOString(),
+      updatedAt: releasedAt,
+      releaseReceipts: appendReleaseReceipt(current, {
+        leaseToken,
+        releasedAt,
+      }),
     });
     await atomicWrite(paths.record, next);
     return publicResult(next, {

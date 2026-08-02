@@ -376,7 +376,7 @@ directory. The CLI never replaces an existing artifact.
 | Command | Purpose |
 | --- | --- |
 | `preflight` | Validate source selection, state location, VCS metadata, and scanner availability |
-| `transport-attempt` | Own the durable Browser-to-Ego readiness state machine, immutable route binding, private capabilities, and resumable status |
+| `transport-attempt` | Own the durable Browser-to-Ego readiness state machine, write-ahead side effects, exact crash replay, immutable route binding, private capabilities, and resumable status |
 | `transport-gate` | Serialize primary-browser health probes, remember a closed host generation, neutrally release an unused claim, and allow one bounded half-open probe after a host restart or cooldown |
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
 | `transport-plan` | Create and scan a digest-bound size-aware composer/attachment plan without authorizing browser action |
@@ -410,6 +410,10 @@ model label, agentic allowance, upload capability, and API budget separately.
   coordinator may claim a same-host half-open zero-egress probe after cooldown.
   Failure restarts the cooldown, cooldown recovery never claims a restart, and
   neither path authorizes source work by itself.
+- Browser claim/resolution and Ego acquire/release effects keep bounded
+  capability-digest receipts. A checkpoint crash can replay only the exact
+  action; replay of an older resolution cannot mutate a newer coordinator's
+  active claim or lease.
 - After a conclusive primary outage, an already-installed Ego Browser is the
   only fallback. It gets one isolated task space and one read-only readiness
   attempt. If login or verification is required, control returns to the user;

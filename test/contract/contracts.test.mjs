@@ -742,6 +742,18 @@ test("CLI errors use the stable JSON envelope and policy exit code", async () =>
   assert.equal(result.json.error.code, "PATH_TRAVERSAL");
 });
 
+test("CLI rejects an option not declared by the selected command", async () => {
+  const result = await runCli([
+    "status",
+    "--run-id", "missing-run",
+    "--state-dri", "/tmp/typo-must-not-be-ignored",
+  ]);
+
+  assert.equal(result.code, 2);
+  assert.equal(result.json.error.code, "USAGE");
+  assert.match(result.json.error.message, /Unknown option --state-dri/);
+});
+
 test("CLI exposes machine-readable help and version without repository context", async () => {
   const help = await runCli(["--help"]);
   assert.equal(help.code, 0);
@@ -771,6 +783,30 @@ test("CLI exposes machine-readable help and version without repository context",
       "import",
       "verify",
     ],
+  );
+  assert.equal(
+    help.json.data.commandContracts.length,
+    help.json.data.commands.length,
+  );
+  assert.deepEqual(
+    help.json.data.commandContracts.find(({ name }) => name === "status"),
+    {
+      name: "status",
+      required: ["run-id"],
+      optional: ["state-dir"],
+      repeatable: [],
+    },
+  );
+  assert.deepEqual(
+    help.json.data.commandContracts.find(({ name }) => name === "pack"),
+    {
+      name: "pack",
+      required: ["root", "output"],
+      optional: [
+        "state-dir", "include", "max-file-bytes", "max-total-bytes",
+      ],
+      repeatable: ["include"],
+    },
   );
 
   const version = await runCli(["--version"]);

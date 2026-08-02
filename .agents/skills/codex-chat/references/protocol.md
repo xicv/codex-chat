@@ -391,6 +391,12 @@ controller rather than authorizing an adapter to send.
 
 ## CLI result
 
+The CLI validates one declarative command registry at startup. Each entry owns
+its handler and exact required, optional, and repeatable option sets. Dispatch
+and machine-readable `--help` use the same registry; duplicate commands,
+inconsistent option sets, missing handlers, unknown options, and option typos
+fail before handler execution.
+
 Every command emits one JSON line:
 
 ```json

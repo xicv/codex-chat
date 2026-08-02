@@ -1,14 +1,12 @@
 import { fail } from "./errors.mjs";
 
-const repeatable = new Set(["include"]);
-
-export function parseArgs(argv) {
+export function parseArgs(argv, { repeatable = new Set(["include"]) } = {}) {
   const [command, ...tokens] = argv;
   if (!command || command.startsWith("-")) {
     fail("USAGE", "A command is required.");
   }
 
-  const options = {};
+  const optionValues = new Map();
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (!token.startsWith("--")) {
@@ -19,17 +17,24 @@ export function parseArgs(argv) {
     if (!value || value.startsWith("--")) {
       fail("USAGE", `Option --${key} requires a value.`);
     }
+    if (key === "scanner") {
+      fail(
+        "SCANNER_OVERRIDE_FORBIDDEN",
+        "The installed CLI always uses an identity-verified gitleaks executable.",
+      );
+    }
     index += 1;
     if (repeatable.has(key)) {
-      options[key] ??= [];
-      options[key].push(value);
-    } else if (Object.hasOwn(options, key)) {
+      const values = optionValues.get(key) ?? [];
+      values.push(value);
+      optionValues.set(key, values);
+    } else if (optionValues.has(key)) {
       fail("USAGE", `Option --${key} may only be specified once.`);
     } else {
-      options[key] = value;
+      optionValues.set(key, value);
     }
   }
-  return { command, options };
+  return { command, options: Object.fromEntries(optionValues) };
 }
 
 export function required(options, key) {

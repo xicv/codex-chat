@@ -8,6 +8,10 @@ that introduced each change; merge-only commits are omitted.
 
 ### Added
 
+- A validated declarative CLI command registry that owns each operational
+  command's handler, required and optional options, repeatable options,
+  dispatch, and machine-readable help. Undeclared options now fail before
+  handler execution.
 - A shared trusted-file snapshot primitive for bounded no-follow reads, with
   strict policy inputs, descriptor/path identity checks, private-mode support,
   change detection, and allocation-safe chunked reads.

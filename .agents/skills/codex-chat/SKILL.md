@@ -361,6 +361,12 @@ and `transport-plan` commands remain available for protocol tooling and
 backwards compatibility, but do not use their separate outputs as a newly
 prepared capsule when `prepare-capsule` is available.
 
+The CLI registers every operational command once with its handler and exact
+required, optional, and repeatable option sets. Its machine-readable `--help`
+output is derived from that registry. Treat `USAGE` for an unknown option as a
+hard stop; do not retry with guessed flags or assume an ignored option took
+effect.
+
 Set upload capability to `available` only after the already-selected transport
 has exposed a supported upload control in a read-only capability observation.
 Small contexts become one exact inline composer envelope. Larger contexts

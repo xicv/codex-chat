@@ -136,6 +136,10 @@ use a session authenticated by the user.
     evidence use one no-follow, byte-bounded reader that verifies regular-file
     type, optional private mode, descriptor/path identity, and unchanged
     metadata before returning bytes.
+19. **Register each operational command once.** One validated command registry
+    owns the handler, required and optional options, repeatable options,
+    dispatch, and machine-readable help. Unknown or misspelled options fail
+    before any command side effect.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
@@ -313,11 +317,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 220/220 |
-| Contract tests | 38/38 |
+| Unit tests | 225/225 |
+| Contract tests | 39/39 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 3/3 |
-| Aggregate test gate | 266/266 |
+| Aggregate test gate | 272/272 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -390,6 +394,11 @@ node .agents/skills/codex-chat/scripts/codex-chat.mjs control \
   --endpoint http://127.0.0.1:9443 \
   --request /private/tmp/coordination-request.json
 ```
+
+`--help` returns the registry-derived command and option contracts as JSON.
+The same registry validates dispatch, so help cannot advertise a command that
+has no handler and a command cannot silently accept an undeclared option.
+Unknown options fail with `USAGE` before the selected handler runs.
 
 Atomic capsule preparation uses a private store outside the source root. Its
 content-addressed context, task-envelope, and transport-manifest artifacts are

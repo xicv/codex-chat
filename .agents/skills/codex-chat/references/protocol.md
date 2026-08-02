@@ -263,6 +263,14 @@ idempotent, while a different claim for the slot fails with
 content-addressed receipt authoritative. A receipt file left before a crash
 without its slot is non-authoritative; the same replay can finish the slot.
 
+Delivery and terminal evidence use the same immutable-evidence store. The
+store serializes each slot, acquires any required run-head lock, rechecks the
+authoritative run under that lock, validates private directory identities,
+opens existing artifacts without following symbolic links, verifies exact
+bytes on replay, publishes artifacts before the authoritative slot, and
+revalidates every artifact when the slot already exists. Different slots may
+share identical content-addressed objects without crossing their authority.
+
 Allowed transport states are `accepted` and `rejected`, but both retain
 `modelVisible: "unknown"`. Provider acceptance proves neither backend model
 identity nor model visibility. The command does not upload, send, mutate the

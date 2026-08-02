@@ -2,21 +2,17 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
   lstat,
-  mkdir,
-  mkdtemp,
   open,
   realpath,
-  rm,
-  stat,
-  writeFile,
 } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fail } from "./errors.mjs";
-import { withOwnedFileLock } from "./file-lock.mjs";
+import {
+  openImmutableEvidenceStore,
+  publishImmutableEvidence,
+  scanImmutableEvidence,
+} from "./immutable-evidence-store.mjs";
 import { LIMITS_V2 } from "./limits.mjs";
-import { atomicWrite } from "./pack.mjs";
-import { scanDirectory } from "./scanner.mjs";
 import { loadRun, statePaths } from "./state.mjs";
 
 const {
@@ -740,21 +736,20 @@ async function scanReceiptInputs({
   scanner,
   testMode,
 }) {
-  const staging = await mkdtemp(path.join(os.tmpdir(), "codex-chat-delivery-scan-"));
-  try {
-    await Promise.all([
-      writeFile(path.join(staging, "manifest.json"), manifestBytes, { mode: 0o600 }),
-      writeFile(path.join(staging, "plan.json"), planBytes, { mode: 0o600 }),
-      writeFile(path.join(staging, "evidence.bin"), evidenceBytes, { mode: 0o600 }),
-      writeFile(path.join(staging, "receipt.json"), serialized, { mode: 0o600 }),
-    ]);
-    return await scanDirectory(staging, scanner, { testMode });
-  } finally {
-    await rm(staging, { recursive: true, force: true });
-  }
+  return scanImmutableEvidence({
+    entries: [
+      { name: "manifest.json", bytes: manifestBytes },
+      { name: "plan.json", bytes: planBytes },
+      { name: "evidence.bin", bytes: evidenceBytes },
+      { name: "receipt.json", bytes: Buffer.from(serialized) },
+    ],
+    scanner,
+    testMode,
+    prefix: "codex-chat-delivery-scan-",
+  });
 }
 
-async function prepareDeliveryDirectory(stateDir, runId) {
+async function openDeliveryStore(stateDir, runId) {
   const absoluteStateDir = path.resolve(stateDir);
   const stateInfo = await lstat(absoluteStateDir).catch(() => null);
   if (!stateInfo?.isDirectory() || stateInfo.isSymbolicLink()) {
@@ -769,171 +764,19 @@ async function prepareDeliveryDirectory(stateDir, runId) {
     fail("DELIVERY_RUN_STATE_INVALID", "Delivery run directory is invalid.");
   }
   const canonicalRun = await realpath(paths.directory);
-  const directory = path.join(canonicalRun, "delivery-receipts");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const directoryInfo = await lstat(directory);
-  if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) {
-    fail(
-      "DELIVERY_OUTPUT_PARENT_INVALID",
-      "Delivery receipt directory must be a real directory.",
-    );
-  }
-  const canonicalDirectory = await realpath(directory);
-  const identity = await stat(canonicalDirectory);
   return {
     paths,
-    directory: canonicalDirectory,
-    parent: canonicalDirectory,
-    parentIdentity: { dev: identity.dev, ino: identity.ino },
+    store: await openImmutableEvidenceStore({
+      root: path.join(canonicalRun, "delivery-receipts"),
+      directories: [".locks"],
+      codes: {
+        directoryInvalid: "DELIVERY_OUTPUT_PARENT_INVALID",
+        parentChanged: "DELIVERY_OUTPUT_PARENT_CHANGED",
+        slotBusy: "DELIVERY_SLOT_BUSY",
+        slotConflict: "DELIVERY_SLOT_CONFLICT",
+      },
+    }),
   };
-}
-
-async function readExistingBytes(filePath, label) {
-  const info = await lstat(filePath).catch((error) => {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  });
-  if (info === null) return null;
-  return readRealFile(filePath, label, MAX_RECEIPT_BYTES);
-}
-
-function parseSlot(bytes) {
-  const slot = parseJson(bytes, "DELIVERY_SLOT_INVALID", "Delivery slot");
-  if (
-    slot?.kind !== "CODEX_CHAT_DELIVERY_SLOT_V2" ||
-    slot.protocolVersion !== 2 ||
-    !SHA256.test(slot.slotId ?? "") ||
-    !SHA256.test(slot.receiptId ?? "") ||
-    !SHA256.test(slot.receiptSha256 ?? "") ||
-    Object.keys(slot).some((key) =>
-      ![
-        "kind",
-        "protocolVersion",
-        "slotId",
-        "receiptId",
-        "receiptSha256",
-      ].includes(key)
-    )
-  ) {
-    fail("DELIVERY_SLOT_INVALID", "Delivery slot is malformed.");
-  }
-  return slot;
-}
-
-async function assertDeliveryDirectoryIdentity(directoryInfo) {
-  const current = await stat(directoryInfo.parent).catch(() => null);
-  if (
-    !current ||
-    current.dev !== directoryInfo.parentIdentity.dev ||
-    current.ino !== directoryInfo.parentIdentity.ino
-  ) {
-    fail(
-      "DELIVERY_OUTPUT_PARENT_CHANGED",
-      "Delivery receipt directory identity changed.",
-    );
-  }
-}
-
-async function createEvidenceFiles({
-  directoryInfo,
-  receipt,
-  serialized,
-  receiptSha256,
-}) {
-  await assertDeliveryDirectoryIdentity(directoryInfo);
-  const receiptPath = path.join(
-    directoryInfo.directory,
-    `${receipt.receiptId}.json`,
-  );
-  const slotPath = path.join(
-    directoryInfo.directory,
-    `${receipt.slotId}.slot.json`,
-  );
-  const existingSlotBytes = await readExistingBytes(
-    slotPath,
-    "DELIVERY_SLOT",
-  );
-  if (existingSlotBytes) {
-    const slot = parseSlot(existingSlotBytes);
-    if (
-      slot.slotId !== receipt.slotId ||
-      slot.receiptId !== receipt.receiptId ||
-      slot.receiptSha256 !== receiptSha256
-    ) {
-      fail(
-        "DELIVERY_SLOT_CONFLICT",
-        "Delivery slot already binds different evidence.",
-      );
-    }
-    const existingReceipt = await readExistingBytes(
-      receiptPath,
-      "DELIVERY_RECEIPT",
-    );
-    if (!existingReceipt || sha256(existingReceipt) !== receiptSha256) {
-      fail(
-        "DELIVERY_RECEIPT_CONFLICT",
-        "Delivery slot receipt is missing or changed.",
-      );
-    }
-    await assertDeliveryDirectoryIdentity(directoryInfo);
-    return { receiptPath, slotPath, idempotent: true };
-  }
-
-  const existingReceipt = await readExistingBytes(
-    receiptPath,
-    "DELIVERY_RECEIPT",
-  );
-  if (existingReceipt) {
-    if (
-      sha256(existingReceipt) !== receiptSha256 ||
-      existingReceipt.toString("utf8") !== serialized
-    ) {
-      fail(
-        "DELIVERY_RECEIPT_CONFLICT",
-        "Delivery receipt ID already contains different bytes.",
-      );
-    }
-  } else {
-    await atomicWrite(receiptPath, serialized, directoryInfo).catch((error) => {
-      if (error.code === "OUTPUT_EXISTS") {
-        fail(
-          "DELIVERY_RECEIPT_CONFLICT",
-          "Delivery receipt appeared during creation.",
-        );
-      }
-      if (error.code === "OUTPUT_PARENT_CHANGED") {
-        fail(
-          "DELIVERY_OUTPUT_PARENT_CHANGED",
-          "Delivery receipt directory changed during creation.",
-        );
-      }
-      throw error;
-    });
-  }
-
-  const slotSerialized = `${stable({
-    kind: "CODEX_CHAT_DELIVERY_SLOT_V2",
-    protocolVersion: 2,
-    slotId: receipt.slotId,
-    receiptId: receipt.receiptId,
-    receiptSha256,
-  })}\n`;
-  await atomicWrite(slotPath, slotSerialized, directoryInfo).catch((error) => {
-    if (error.code === "OUTPUT_EXISTS") {
-      fail(
-        "DELIVERY_SLOT_CONFLICT",
-        "Delivery slot appeared during creation.",
-      );
-    }
-    if (error.code === "OUTPUT_PARENT_CHANGED") {
-      fail(
-        "DELIVERY_OUTPUT_PARENT_CHANGED",
-        "Delivery receipt directory changed during creation.",
-      );
-    }
-    throw error;
-  });
-  return { receiptPath, slotPath, idempotent: false };
 }
 
 async function loadDeliveryRun({ stateDir, runId }) {
@@ -1000,34 +843,43 @@ export async function createDeliveryReceipt({
     testMode,
   });
   await testHooks?.beforeCommit?.();
-  const directoryInfo = await prepareDeliveryDirectory(stateDir, runId);
-  const lockPath = path.join(
-    directoryInfo.directory,
-    ".locks",
-    `${receipt.slotId}.lock`,
-  );
-  const result = await withOwnedFileLock({
-    lockPath,
-    busyCode: "DELIVERY_SLOT_BUSY",
-    busyMessage: "Another writer holds the delivery slot.",
-  }, async () =>
-    withOwnedFileLock({
+  const directoryInfo = await openDeliveryStore(stateDir, runId);
+  const receiptRelativePath = `${receipt.receiptId}.json`;
+  const slotRelativePath = `${receipt.slotId}.slot.json`;
+  const slotBytes = Buffer.from(`${stable({
+    kind: "CODEX_CHAT_DELIVERY_SLOT_V2",
+    protocolVersion: 2,
+    slotId: receipt.slotId,
+    receiptId: receipt.receiptId,
+    receiptSha256,
+  })}\n`);
+  const result = await publishImmutableEvidence({
+    store: directoryInfo.store,
+    slotId: receipt.slotId,
+    slot: {
+      relativePath: slotRelativePath,
+      bytes: slotBytes,
+      maxBytes: MAX_RECEIPT_BYTES,
+    },
+    artifacts: [{
+      relativePath: receiptRelativePath,
+      bytes: Buffer.from(serialized),
+      maxBytes: MAX_RECEIPT_BYTES,
+      conflictCode: "DELIVERY_RECEIPT_CONFLICT",
+    }],
+    authority: {
       lockPath: directoryInfo.paths.lock,
       busyCode: "DELIVERY_RUN_BUSY",
       busyMessage: "Another writer holds the delivery run.",
-    }, async () => {
-      const currentRun = await loadDeliveryRun({ stateDir, runId });
-      assertRunBinding(currentRun, plan, runId);
-      return createEvidenceFiles({
-        directoryInfo,
-        receipt,
-        serialized,
-        receiptSha256,
-      });
-    })
-  );
+      async assertCurrent() {
+        const currentRun = await loadDeliveryRun({ stateDir, runId });
+        assertRunBinding(currentRun, plan, runId);
+      },
+    },
+  });
+  const receiptPath = result.artifactPaths[receiptRelativePath];
   return {
-    artifactPath: result.receiptPath,
+    artifactPath: receiptPath,
     slotPath: result.slotPath,
     size: Buffer.byteLength(serialized),
     sha256: receiptSha256,

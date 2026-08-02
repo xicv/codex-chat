@@ -8,6 +8,11 @@ that introduced each change; merge-only commits are omitted.
 
 ### Added
 
+- A deep immutable-evidence store shared by delivery receipts and terminal
+  captures. It owns exact-input scanning, private directory identities,
+  no-follow reads, per-slot locking, run-head guards, create-once artifact and
+  slot publication, partial-publication recovery, idempotent replay, and
+  tamper detection across concurrent coordinators.
 - A deep, durable `transport-attempt` interface that owns Browser probing,
   the single rediscovery, neutral unavailability release, Ego bootstrap
   fallback, inherited-draft preservation, exact task-space/target binding,

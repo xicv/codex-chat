@@ -376,6 +376,7 @@ directory. The CLI never replaces an existing artifact.
 | Command | Purpose |
 | --- | --- |
 | `preflight` | Validate source selection, state location, VCS metadata, and scanner availability |
+| `transport-attempt` | Own the durable Browser-to-Ego readiness state machine, immutable route binding, private capabilities, and resumable status |
 | `transport-gate` | Serialize primary-browser health probes, remember a closed host generation, neutrally release an unused claim, and allow one bounded half-open probe after a host restart or cooldown |
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
 | `transport-plan` | Create and scan a digest-bound size-aware composer/attachment plan without authorizing browser action |

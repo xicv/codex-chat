@@ -27,6 +27,7 @@ import {
   revalidateActiveTerminalCapture,
 } from "./lib/terminal-capture.mjs";
 import { transportGate } from "./lib/transport-gate.mjs";
+import { advanceTransportAttempt } from "./lib/transport-attempt.mjs";
 import { egoBootstrapLease } from "./lib/ego-bootstrap-lease.mjs";
 import { runVerification } from "./lib/verify.mjs";
 
@@ -34,6 +35,7 @@ const CLI_VERSION = "0.1.0";
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const COMMANDS = [
   "preflight",
+  "transport-attempt",
   "transport-gate",
   "ego-bootstrap-lease",
   "pack",
@@ -83,7 +85,13 @@ async function readJsonOption(filePath, label, maxBytes = null) {
   }
 }
 
-function parseInlineJson(value, label) {
+function parseInlineJson(value, label, maxBytes = null) {
+  if (maxBytes !== null && Buffer.byteLength(value, "utf8") > maxBytes) {
+    throw new CodexChatError(
+      "JSON_INLINE_TOO_LARGE",
+      `${label} exceeds its protocol byte limit.`,
+    );
+  }
   try {
     return JSON.parse(value);
   } catch (error) {
@@ -278,6 +286,58 @@ async function main() {
         stateDir,
         includes: options.include,
         scanner: "gitleaks",
+      }),
+    );
+    return;
+  }
+  if (command === "transport-attempt") {
+    const action = required(options, "action");
+    if (options.observation && options["observation-json"]) {
+      throw new CodexChatError(
+        "USAGE",
+        "Use only one of --observation or --observation-json.",
+      );
+    }
+    const observation = options.observation
+      ? await readJsonOption(
+          options.observation,
+          "transport observation",
+          64 * 1024,
+        )
+      : options["observation-json"]
+        ? parseInlineJson(
+            options["observation-json"],
+            "transport observation",
+            64 * 1024,
+          )
+        : null;
+    emitSuccess(
+      command,
+      await advanceTransportAttempt({
+        action,
+        transportStateDir,
+        owner: {
+          workspaceId: required(options, "workspace-id"),
+          coordinatorId: required(options, "coordinator-id"),
+          workUnitId: required(options, "work-unit-id"),
+          agentId: required(options, "agent-id"),
+          attemptId: required(options, "attempt-id"),
+        },
+        ...(action === "start"
+          ? {
+              availability: {
+                primary: parseBooleanOption(
+                  required(options, "primary-available"),
+                  "--primary-available",
+                ),
+                ego: parseBooleanOption(
+                  required(options, "ego-available"),
+                  "--ego-available",
+                ),
+              },
+            }
+          : {}),
+        ...(observation === null ? {} : { observation }),
       }),
     );
     return;

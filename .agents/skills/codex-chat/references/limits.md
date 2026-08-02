@@ -37,6 +37,20 @@ and event hash.
 
 Changing a limit is a protocol/contract change and requires corresponding tests and schema updates.
 
+Size-aware transport manifest v1 uses these fixed limits:
+
+| Area | Limit |
+| --- | ---: |
+| Input portable context | 786,432 bytes |
+| Input task envelope | 65,536 bytes |
+| Composer task envelope | 32,768 bytes |
+| Inline context | 24,576 bytes |
+| Inline composer envelope | 49,152 bytes |
+| Serialized transport manifest | 131,072 bytes |
+
+The manifest is a deterministic, scanned plan. It never grants upload, send,
+resend, provider acceptance, or model-visibility authority.
+
 Typed manifest v2 uses these fixed limits:
 
 | Area | Limit |

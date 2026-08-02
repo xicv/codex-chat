@@ -21,6 +21,7 @@ Background and goal
 Context binding
 - Context artifact SHA-256: [digest]
 - Exact task envelope SHA-256: [digest]
+- Transport manifest SHA-256 and strategy: [digest and strategy]
 - Expected terminal marker: [unique-terminal-marker]
 - Selected files: [manifest]
 - VCS baseline: [kind/ref/dirty state]

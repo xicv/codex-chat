@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-chat.invalid/schemas/transport-manifest-v1.schema.json",
+  "title": "CODEX_CHAT_TRANSPORT_MANIFEST_V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "protocolVersion",
+    "transportKind",
+    "uploadCapability",
+    "strategy",
+    "failureReason",
+    "reservationEligible",
+    "context",
+    "taskEnvelope",
+    "composer",
+    "attachment",
+    "thresholds",
+    "modelVisible",
+    "actionAuthorized",
+    "resendAuthorized"
+  ],
+  "properties": {
+    "kind": { "const": "CODEX_CHAT_TRANSPORT_MANIFEST_V1" },
+    "protocolVersion": { "const": 1 },
+    "transportKind": { "$ref": "#/$defs/id" },
+    "uploadCapability": {
+      "enum": ["available", "unavailable", "unknown"]
+    },
+    "strategy": {
+      "enum": ["inline-context", "attachment-context", "stop"]
+    },
+    "failureReason": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "enum": [
+            "task_envelope_too_large",
+            "upload_capability_unavailable",
+            "upload_capability_unknown"
+          ]
+        }
+      ]
+    },
+    "reservationEligible": { "type": "boolean" },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "bytes", "sha256"],
+      "properties": {
+        "kind": { "const": "COLLAB_CONTEXT_V1" },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 786432 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "taskEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bytes", "sha256"],
+      "properties": {
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "composer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contextPlacement", "boundaryId", "bytes", "sha256", "text"],
+      "properties": {
+        "contextPlacement": { "enum": ["inline", "attachment", "none"] },
+        "boundaryId": { "$ref": "#/$defs/nullableSha256" },
+        "bytes": { "type": "integer", "minimum": 0, "maximum": 49152 },
+        "sha256": { "$ref": "#/$defs/nullableSha256" },
+        "text": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "minLength": 1, "maxLength": 131072 }
+          ]
+        }
+      }
+    },
+    "attachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "ordinal", "sha256", "bytes"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "ordinal": {
+          "oneOf": [{ "type": "null" }, { "const": 0 }]
+        },
+        "sha256": { "$ref": "#/$defs/nullableSha256" },
+        "bytes": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 1, "maximum": 786432 }
+          ]
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxTaskEnvelopeComposerBytes",
+        "maxInlineContextBytes",
+        "maxInlineComposerBytes"
+      ],
+      "properties": {
+        "maxTaskEnvelopeComposerBytes": { "const": 32768 },
+        "maxInlineContextBytes": { "const": 24576 },
+        "maxInlineComposerBytes": { "const": 49152 }
+      }
+    },
+    "modelVisible": { "const": "unknown" },
+    "actionAuthorized": { "const": false },
+    "resendAuthorized": { "const": false }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "strategy": { "const": "inline-context" } } },
+      "then": {
+        "properties": {
+          "failureReason": { "type": "null" },
+          "reservationEligible": { "const": true },
+          "composer": {
+            "properties": {
+              "contextPlacement": { "const": "inline" },
+              "boundaryId": { "$ref": "#/$defs/sha256" },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "text": { "type": "string" }
+            }
+          },
+          "attachment": {
+            "properties": {
+              "required": { "const": false },
+              "ordinal": { "type": "null" },
+              "sha256": { "type": "null" },
+              "bytes": { "type": "null" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "strategy": { "const": "attachment-context" } }
+      },
+      "then": {
+        "properties": {
+          "uploadCapability": { "const": "available" },
+          "failureReason": { "type": "null" },
+          "reservationEligible": { "const": true },
+          "composer": {
+            "properties": {
+              "contextPlacement": { "const": "attachment" },
+              "boundaryId": { "type": "null" },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "text": { "type": "string" }
+            }
+          },
+          "attachment": {
+            "properties": {
+              "required": { "const": true },
+              "ordinal": { "const": 0 },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "bytes": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "strategy": { "const": "stop" } } },
+      "then": {
+        "properties": {
+          "failureReason": { "type": "string" },
+          "reservationEligible": { "const": false },
+          "composer": {
+            "properties": {
+              "contextPlacement": { "const": "none" },
+              "boundaryId": { "type": "null" },
+              "bytes": { "const": 0 },
+              "sha256": { "type": "null" },
+              "text": { "type": "null" }
+            }
+          },
+          "attachment": {
+            "properties": { "required": { "const": false } }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "nullableSha256": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+    }
+  }
+}

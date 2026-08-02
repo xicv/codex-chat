@@ -36,6 +36,10 @@ that introduced each change; merge-only commits are omitted.
 - An executable Ego readiness and cleanup decision core with strict bounded
   schemas, ordered fail-closed guards, draft-byte exclusion, coherent target
   identities, and mutation-free cleanup rejection.
+- A deterministic size-aware transport manifest that re-scans and binds the
+  exact context and task envelope, emits canonical composer bytes, selects a
+  capability-gated ordinal-zero attachment for larger context, and never
+  grants browser action, resend, or model-visibility authority.
 - A neutral transport-probe release that frees an unused primary claim without
   falsely marking the browser host healthy or failed.
 - A bounded external-response observation budget that permits durable local

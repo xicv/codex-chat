@@ -4,9 +4,13 @@
 
 - Explicit invocation is required because selected local source may leave the machine.
 - The helper CLI never controls browsers, accesses profiles, reads cookies, extracts credentials, or sends messages.
-- The portable v1 capsule transfers bounded inline UTF-8/LF context. The v2
-  manifest can inventory and scan typed binary representations, but it does
-  not automate file upload or prove model visibility.
+- The portable v1 capsule serializes bounded UTF-8/LF source inline in one JSON
+  artifact. The v2 manifest can inventory and scan typed binary
+  representations, but it does not automate file upload or prove model
+  visibility.
+- A transport manifest re-scans and digest-binds the portable context and exact
+  task envelope, then chooses a bounded inline or capability-gated attachment
+  strategy. It never authorizes a browser action or resend.
 - A v2 delivery receipt records digest-bound transport observations only. It
   does not upload, send, prove backend model visibility, or authorize resend.
 - A hardened terminal capture receipt stores and binds the full response and
@@ -48,6 +52,15 @@ again under the run lock before create-only receipt and slot publication. A
 failed scan or stale stream head publishes no authoritative slot. Raw provider
 identifiers may themselves look secret-shaped, so prefer recorded SHA-256
 fingerprints where the provider exposes enough stable evidence.
+
+Transport planning reads both egress inputs without following the final path,
+checks the caller-supplied digests, rejects invalid UTF-8/LF task bytes and
+non-v1 context artifacts, and scans the context, task, and generated manifest
+together. A plan with unknown or unavailable upload capability cannot select
+attachment delivery. The generated manifest contains no local input paths and
+keeps action, resend, and model visibility false/unknown. Its
+`reservationEligible` field means only that the state machine may bind the
+plan; it is not UI authority.
 
 Terminal capture inputs are no-follow, size-bounded UTF-8/LF files. The helper
 requires exactly one ordered boundary pair, an exact extracted result match,

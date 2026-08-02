@@ -64,6 +64,15 @@ export const LIMITS_EGO_BOOTSTRAP_V1 = Object.freeze({
   }),
 });
 
+export const LIMITS_TRANSPORT_MANIFEST_V1 = Object.freeze({
+  maxContextBytes: LIMITS_V1.pack.maxArtifactBytes,
+  maxTaskEnvelopeInputBytes: 64 * 1024,
+  maxTaskEnvelopeComposerBytes: 32 * 1024,
+  maxInlineContextBytes: 24 * 1024,
+  maxInlineComposerBytes: 48 * 1024,
+  maxArtifactBytes: 128 * 1024,
+});
+
 export const LIMITS_DISTRIBUTED_V1 = Object.freeze({
   lease: Object.freeze({
     minTtlMs: 1_000,

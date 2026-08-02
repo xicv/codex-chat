@@ -139,6 +139,14 @@ hashed into a task envelope, or entered into run state. If any upload or send
 action may already have occurred, do not start or resume a pre-egress attempt;
 use the ambiguity and reconciliation rules for the existing run.
 
+`transport-attempt` records a bounded pending effect before it claims the
+Browser probe or acquires Ego. If a process exits after that shared effect but
+before the attempt checkpoint, `status` returns `decision: "recover"`; repeat
+only its exact `nextAction` with the original availability and observation.
+The controller verifies the request digest and replays the exact capability
+idempotently. Never substitute a different observation, route, coordinator,
+or attempt, and never extract the private capability from local state.
+
 ### Legacy low-level diagnostics
 
 The low-level `transport-gate` and `ego-bootstrap-lease` commands remain for

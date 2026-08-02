@@ -35,6 +35,16 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function stable(value) {
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${stable(value[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function exactKeys(value, keys) {
   return value &&
     typeof value === "object" &&
@@ -117,6 +127,10 @@ function ownerMatches(left, right) {
 }
 
 function validateRecord(record) {
+  const pendingEffect = record?.pendingEffect ?? null;
+  const pendingReason = record?.pendingReason ?? null;
+  const pendingAction = record?.pendingAction ?? null;
+  const pendingRequestSha256 = record?.pendingRequestSha256 ?? null;
   if (
     record?.schema !== RECORD_SCHEMA ||
     !exactKeys(record.owner, OWNER_KEYS) ||
@@ -131,6 +145,27 @@ function validateRecord(record) {
     !Number.isSafeInteger(record.sequence) ||
     record.sequence < 1 ||
     ![1, 2].includes(record.primaryProbeNumber) ||
+    ![null, "gate_claim", "ego_acquire"].includes(pendingEffect) ||
+    !(
+      pendingEffect === "ego_acquire"
+        ? validText(pendingReason, 256)
+        : pendingReason === null
+    ) ||
+    !(
+      pendingEffect === null
+        ? pendingAction === null && pendingRequestSha256 === null
+        : (
+            ["start", "observe_primary"].includes(pendingAction) &&
+            /^[a-f0-9]{64}$/u.test(pendingRequestSha256 ?? "")
+          )
+    ) ||
+    !(
+      pendingEffect === "gate_claim"
+        ? record.phase === "primary_probe_pending"
+        : pendingEffect === "ego_acquire"
+          ? record.phase === "ego_readiness_pending"
+          : true
+    ) ||
     !(
       record.phase === "primary_probe_pending"
         ? validText(record.primaryClaimToken, 128)
@@ -215,7 +250,13 @@ function validateRecord(record) {
   }
   validateOwner(record.owner);
   validateAvailability(record.availability);
-  return record;
+  return {
+    ...record,
+    pendingEffect,
+    pendingReason,
+    pendingAction,
+    pendingRequestSha256,
+  };
 }
 
 async function readRecord(filePath) {
@@ -400,6 +441,19 @@ function stoppedResult(record) {
   };
 }
 
+function recoveryResult(record) {
+  return {
+    schema: RESULT_SCHEMA,
+    attemptId: record.owner.attemptId,
+    sequence: record.sequence,
+    phase: record.phase,
+    decision: "recover",
+    adapter: record.pendingEffect === "gate_claim" ? "browser" : "ego",
+    reason: "side_effect_recovery_required",
+    nextAction: `repeat_${record.pendingAction}`,
+  };
+}
+
 function currentResult(record, reason = "attempt_resumed") {
   if (record.phase === "primary_probe_pending") {
     return primaryProbeResult(record, reason);
@@ -416,14 +470,20 @@ function currentResult(record, reason = "attempt_resumed") {
   return stoppedResult(record);
 }
 
-async function acquireEgo({ transportStateDir, owner, dependencies }) {
+async function acquirePrescribedEgo({
+  transportStateDir,
+  owner,
+  leaseId,
+  leaseToken,
+  dependencies,
+}) {
   const lease = await egoBootstrapLease({
     action: "acquire",
     transportStateDir,
     owner,
+    leaseId,
+    leaseToken,
     clock: dependencies.clock,
-    createToken: dependencies.createEgoToken,
-    createLeaseId: dependencies.createEgoLeaseId,
   });
   if (!lease.acquired || lease.leaseToken === null) {
     fail(
@@ -434,12 +494,45 @@ async function acquireEgo({ transportStateDir, owner, dependencies }) {
   return lease;
 }
 
+function newEgoCapability(dependencies) {
+  const capability = {
+    leaseId: dependencies.createEgoLeaseId?.() ?? randomUUID(),
+    leaseToken: dependencies.createEgoToken?.() ?? randomUUID(),
+  };
+  if (
+    typeof capability.leaseId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(capability.leaseId) ||
+    typeof capability.leaseToken !== "string" ||
+    capability.leaseToken.length < 16 ||
+    capability.leaseToken.length > 256 ||
+    /[\u0000-\u001f\u007f]/u.test(capability.leaseToken)
+  ) {
+    fail(
+      "TRANSPORT_ATTEMPT_TOKEN_INVALID",
+      "Ego bootstrap recovery capability is invalid.",
+    );
+  }
+  return capability;
+}
+
+function requestSha256(action, availability, observation = null) {
+  return sha256(stable({ action, availability, observation }));
+}
+
+async function afterSideEffect(dependencies, kind) {
+  await dependencies.afterSideEffect?.(kind);
+}
+
 function initialRecord({
   owner,
   availability,
   phase,
   primaryClaimToken = null,
   lease = null,
+  pendingEffect = null,
+  pendingReason = null,
+  pendingAction = null,
+  pendingRequestSha256 = null,
 }) {
   return {
     schema: RECORD_SCHEMA,
@@ -458,7 +551,77 @@ function initialRecord({
     providerPath: null,
     adapter: null,
     taskSpaceId: null,
+    pendingEffect,
+    pendingReason,
+    pendingAction,
+    pendingRequestSha256,
   };
+}
+
+async function completeEgoAcquisition({
+  pending,
+  transportStateDir,
+  owner,
+  paths,
+  dependencies,
+}) {
+  const lease = await acquirePrescribedEgo({
+    transportStateDir,
+    owner,
+    leaseId: pending.egoLeaseId,
+    leaseToken: pending.egoLeaseToken,
+    dependencies,
+  });
+  await afterSideEffect(dependencies, "ego_acquire");
+  const reason = pending.pendingReason;
+  const next = {
+    ...pending,
+    egoLeaseId: lease.leaseId,
+    egoLeaseToken: lease.leaseToken,
+    pendingEffect: null,
+    pendingReason: null,
+    pendingAction: null,
+    pendingRequestSha256: null,
+  };
+  await atomicWrite(paths.record, next);
+  return egoReadinessResult(next, reason);
+}
+
+async function transitionToEgo({
+  current,
+  reason,
+  pendingAction,
+  observation,
+  transportStateDir,
+  owner,
+  paths,
+  dependencies,
+}) {
+  const capability = newEgoCapability(dependencies);
+  const pending = {
+    ...current,
+    sequence: current.sequence + 1,
+    phase: "ego_readiness_pending",
+    primaryClaimToken: null,
+    egoLeaseId: capability.leaseId,
+    egoLeaseToken: capability.leaseToken,
+    pendingEffect: "ego_acquire",
+    pendingReason: reason,
+    pendingAction,
+    pendingRequestSha256: requestSha256(
+      pendingAction,
+      current.availability,
+      observation,
+    ),
+  };
+  await atomicWrite(paths.record, pending);
+  return completeEgoAcquisition({
+    pending,
+    transportStateDir,
+    owner,
+    paths,
+    dependencies,
+  });
 }
 
 export async function advanceTransportAttempt({
@@ -493,49 +656,85 @@ export async function advanceTransportAttempt({
     const current = await readRecord(paths.record);
     if (action === "start") {
       validateAvailability(availability);
-      if (current !== null) {
+      let pending = current;
+      if (pending !== null) {
         if (!ownerMatches(current.owner, owner)) {
           fail(
             "TRANSPORT_ATTEMPT_OWNER_MISMATCH",
             "Transport attempt is owned by a different immutable route.",
           );
         }
-        return currentResult(current);
-      }
-      if (availability.primary !== true) {
-        if (!availability.ego) {
+        if (
+          pending.availability.primary !== availability.primary ||
+          pending.availability.ego !== availability.ego
+        ) {
+          fail(
+            "TRANSPORT_ATTEMPT_AVAILABILITY_MISMATCH",
+            "Transport attempt availability cannot change during recovery.",
+          );
+        }
+        if (pending.pendingEffect === null) return currentResult(pending);
+      } else if (availability.primary !== true) {
+        if (availability.ego !== true) {
           fail(
             "TRANSPORT_ATTEMPT_ADAPTERS_UNAVAILABLE",
             "Neither primary nor Ego transport is available.",
           );
         }
-        const lease = await acquireEgo({ transportStateDir, owner, dependencies });
-        const next = initialRecord({
+        const lease = newEgoCapability(dependencies);
+        pending = initialRecord({
           owner,
           availability,
           phase: "ego_readiness_pending",
           lease,
+          pendingEffect: "ego_acquire",
+          pendingReason: "primary_unavailable",
+          pendingAction: "start",
+          pendingRequestSha256: requestSha256("start", availability),
         });
-        await atomicWrite(paths.record, next);
-        return egoReadinessResult(next, "primary_unavailable");
+        await atomicWrite(paths.record, pending);
+      } else {
+        const primaryClaimToken = dependencies.createToken?.() ?? randomUUID();
+        if (!validText(primaryClaimToken, 128)) {
+          fail(
+            "TRANSPORT_ATTEMPT_TOKEN_INVALID",
+            "Transport attempt capability is invalid.",
+          );
+        }
+        pending = initialRecord({
+          owner,
+          availability,
+          phase: "primary_probe_pending",
+          primaryClaimToken,
+          pendingEffect: "gate_claim",
+          pendingAction: "start",
+          pendingRequestSha256: requestSha256("start", availability),
+        });
+        await atomicWrite(paths.record, pending);
       }
-      const primaryClaimToken = dependencies.createToken?.() ?? randomUUID();
-      if (!validText(primaryClaimToken, 128)) {
-        fail(
-          "TRANSPORT_ATTEMPT_TOKEN_INVALID",
-          "Transport attempt capability is invalid.",
-        );
-      }
-      const gate = await transportGate({
-        action: "claim",
-        transportStateDir,
-        generationProvider: () => inspectDesktopGeneration({
-          processTable: dependencies.processTable,
-        }),
-        clock: dependencies.clock,
-        createToken: () => primaryClaimToken,
-      });
-      if (!gate.probeAllowed) {
+
+      if (pending.pendingEffect === "gate_claim") {
+        const gate = await transportGate({
+          action: "claim",
+          claimToken: pending.primaryClaimToken,
+          transportStateDir,
+          generationProvider: () => inspectDesktopGeneration({
+            processTable: dependencies.processTable,
+          }),
+          clock: dependencies.clock,
+        });
+        if (gate.probeAllowed) {
+          await afterSideEffect(dependencies, "gate_claim");
+          const next = {
+            ...pending,
+            pendingEffect: null,
+            pendingReason: null,
+            pendingAction: null,
+            pendingRequestSha256: null,
+          };
+          await atomicWrite(paths.record, next);
+          return primaryProbeResult(next, gate.reason);
+        }
         if (gate.reason === "probe_in_progress") {
           fail(
             "TRANSPORT_ATTEMPT_PRIMARY_BUSY",
@@ -548,24 +747,27 @@ export async function advanceTransportAttempt({
             `Primary transport probe was not allowed: ${gate.reason}.`,
           );
         }
-        const lease = await acquireEgo({ transportStateDir, owner, dependencies });
-        const next = initialRecord({
+        const lease = newEgoCapability(dependencies);
+        pending = initialRecord({
           owner,
           availability,
           phase: "ego_readiness_pending",
           lease,
+          pendingEffect: "ego_acquire",
+          pendingReason: `primary_${gate.reason}`,
+          pendingAction: "start",
+          pendingRequestSha256: requestSha256("start", availability),
         });
-        await atomicWrite(paths.record, next);
-        return egoReadinessResult(next, `primary_${gate.reason}`);
+        await atomicWrite(paths.record, pending);
       }
-      const next = initialRecord({
+
+      return completeEgoAcquisition({
+        pending,
+        transportStateDir,
         owner,
-        availability,
-        phase: "primary_probe_pending",
-        primaryClaimToken,
+        paths,
+        dependencies,
       });
-      await atomicWrite(paths.record, next);
-      return primaryProbeResult(next, gate.reason);
     }
 
     if (current === null) {
@@ -579,6 +781,29 @@ export async function advanceTransportAttempt({
         "TRANSPORT_ATTEMPT_OWNER_MISMATCH",
         "Transport attempt is owned by a different immutable route.",
       );
+    }
+    if (action === "status" && current.pendingEffect !== null) {
+      return recoveryResult(current);
+    }
+    if (current.pendingEffect !== null) {
+      if (
+        action !== current.pendingAction ||
+        current.pendingEffect !== "ego_acquire" ||
+        requestSha256(action, current.availability, observation) !==
+          current.pendingRequestSha256
+      ) {
+        fail(
+          "TRANSPORT_ATTEMPT_RECOVERY_REQUIRED",
+          `Repeat ${current.pendingAction} to finish the durable side effect.`,
+        );
+      }
+      return completeEgoAcquisition({
+        pending: current,
+        transportStateDir,
+        owner,
+        paths,
+        dependencies,
+      });
     }
     if (action === "status") return currentResult(current);
     if (action === "observe_primary") {
@@ -600,23 +825,23 @@ export async function advanceTransportAttempt({
           claimToken: current.primaryClaimToken,
           transportStateDir,
         });
+        await afterSideEffect(dependencies, "gate_release");
         if (!current.availability.ego) {
           fail(
             "TRANSPORT_ATTEMPT_ADAPTERS_EXHAUSTED",
             "Primary transport is unavailable and the Ego fallback is unavailable.",
           );
         }
-        const lease = await acquireEgo({ transportStateDir, owner, dependencies });
-        const next = {
-          ...current,
-          sequence: current.sequence + 1,
-          phase: "ego_readiness_pending",
-          primaryClaimToken: null,
-          egoLeaseId: lease.leaseId,
-          egoLeaseToken: lease.leaseToken,
-        };
-        await atomicWrite(paths.record, next);
-        return egoReadinessResult(next, "primary_unavailable");
+        return transitionToEgo({
+          current,
+          reason: "primary_unavailable",
+          pendingAction: action,
+          observation,
+          transportStateDir,
+          owner,
+          paths,
+          dependencies,
+        });
       }
       if (observation.outcome === "success") {
         await transportGate({
@@ -628,6 +853,7 @@ export async function advanceTransportAttempt({
           }),
           clock: dependencies.clock,
         });
+        await afterSideEffect(dependencies, "gate_success");
         const next = {
           ...current,
           sequence: current.sequence + 1,
@@ -655,23 +881,23 @@ export async function advanceTransportAttempt({
         }),
         clock: dependencies.clock,
       });
+      await afterSideEffect(dependencies, "gate_failure");
       if (!current.availability.ego) {
         fail(
           "TRANSPORT_ATTEMPT_ADAPTERS_EXHAUSTED",
           "Primary transport closed and the Ego fallback is unavailable.",
         );
       }
-      const lease = await acquireEgo({ transportStateDir, owner, dependencies });
-      const next = {
-        ...current,
-        sequence: current.sequence + 1,
-        phase: "ego_readiness_pending",
-        primaryClaimToken: null,
-        egoLeaseId: lease.leaseId,
-        egoLeaseToken: lease.leaseToken,
-      };
-      await atomicWrite(paths.record, next);
-      return egoReadinessResult(next, "primary_transport_closed");
+      return transitionToEgo({
+        current,
+        reason: "primary_transport_closed",
+        pendingAction: action,
+        observation,
+        transportStateDir,
+        owner,
+        paths,
+        dependencies,
+      });
     }
     if (action === "observe_ego") {
       if (
@@ -711,6 +937,7 @@ export async function advanceTransportAttempt({
           leaseToken: current.egoLeaseToken,
           clock: dependencies.clock,
         });
+        await afterSideEffect(dependencies, "ego_release");
         const next = {
           ...current,
           sequence: current.sequence + 1,
@@ -736,6 +963,7 @@ export async function advanceTransportAttempt({
           leaseToken: current.egoLeaseToken,
           clock: dependencies.clock,
         });
+        await afterSideEffect(dependencies, "ego_release");
         const next = {
           ...current,
           sequence: current.sequence + 1,

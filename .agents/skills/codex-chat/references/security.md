@@ -171,6 +171,14 @@ tool or supported read-only runtime releases its claim to an `idle` state
 without claiming success or failure. A concurrent `probe_in_progress` stops;
 it never starts a second browser writer.
 
+The transport attempt writes a private pending-effect checkpoint before a
+Browser claim or Ego acquisition. Resumption requires the same immutable owner,
+action, availability, and observation digest. Browser resolutions and Ego
+releases retain bounded SHA-256 capability receipts so an exact post-crash
+replay is idempotent; a receipt replay never rewrites a newer active owner.
+Raw capabilities remain confined to the private attempt checkpoint and are
+never returned by `transport-attempt`.
+
 Ego Browser is the sole pre-send alternative after a conclusive primary
 outage. Its skill and CLI must already be installed. Before any Ego invocation,
 the controller acquires one local account-bootstrap lease. The record is

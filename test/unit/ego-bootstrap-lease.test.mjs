@@ -144,20 +144,43 @@ test("mismatched owners and capabilities cannot renew or release an Ego bootstra
     }),
     { code: "EGO_BOOTSTRAP_LEASE_MISMATCH" },
   );
-});
-
-test("Ego bootstrap actions reject capability and TTL fields they cannot consume", async () => {
-  const transportStateDir = await tempDir("codex-chat-ego-inputs-");
   await assert.rejects(
     egoBootstrapLease({
-      action: "acquire",
+      action: "release",
       transportStateDir,
       owner: OWNER_A,
-      leaseId: "caller-lease",
-      leaseToken: "caller-token-0123456789",
+      leaseId: acquired.leaseId,
+      leaseToken: "x".repeat(257),
+      clock: fixedClock("2026-08-01T01:00:10.000Z"),
     }),
-    { code: "EGO_BOOTSTRAP_LEASE_INPUT_INVALID" },
+    { code: "EGO_BOOTSTRAP_LEASE_TOKEN_INVALID" },
   );
+});
+
+test("a prescribed Ego capability resumes acquisition while unsupported inputs fail closed", async () => {
+  const transportStateDir = await tempDir("codex-chat-ego-inputs-");
+  const prescribed = {
+    action: "acquire",
+    transportStateDir,
+    owner: OWNER_A,
+    leaseId: "caller-lease",
+    leaseToken: "caller-token-0123456789",
+  };
+  const acquired = await egoBootstrapLease(prescribed);
+  assert.equal(acquired.acquired, true);
+  assert.equal(acquired.leaseId, "caller-lease");
+  assert.equal(acquired.leaseToken, "caller-token-0123456789");
+  const resumed = await egoBootstrapLease(prescribed);
+  assert.equal(resumed.acquired, true);
+  assert.equal(resumed.reason, "bootstrap_acquire_resumed");
+  assert.equal(resumed.leaseToken, "caller-token-0123456789");
+
+  await assert.rejects(egoBootstrapLease({
+    action: "acquire",
+    transportStateDir,
+    owner: OWNER_A,
+    leaseId: "incomplete-capability",
+  }), { code: "EGO_BOOTSTRAP_LEASE_INPUT_INVALID" });
   await assert.rejects(
     egoBootstrapLease({
       action: "release",
@@ -208,6 +231,55 @@ test("an expired lease can be replaced by a new generation while its old capabil
     }),
     { code: "EGO_BOOTSTRAP_LEASE_MISMATCH" },
   );
+});
+
+test("an exact release replay cannot mutate a newer coordinator's active Ego lease", async () => {
+  const transportStateDir = await tempDir("codex-chat-ego-release-replay-");
+  const first = await egoBootstrapLease({
+    action: "acquire",
+    transportStateDir,
+    owner: OWNER_A,
+    clock: fixedClock("2026-08-01T01:02:00.000Z"),
+    createToken: () => "release-replay-token-a",
+    createLeaseId: () => "release-replay-a",
+  });
+  await egoBootstrapLease({
+    action: "release",
+    transportStateDir,
+    owner: OWNER_A,
+    leaseId: first.leaseId,
+    leaseToken: first.leaseToken,
+    clock: fixedClock("2026-08-01T01:02:01.000Z"),
+  });
+  const second = await egoBootstrapLease({
+    action: "acquire",
+    transportStateDir,
+    owner: OWNER_B,
+    clock: fixedClock("2026-08-01T01:02:02.000Z"),
+    createToken: () => "release-replay-token-b",
+    createLeaseId: () => "release-replay-b",
+  });
+
+  const replayed = await egoBootstrapLease({
+    action: "release",
+    transportStateDir,
+    owner: OWNER_A,
+    leaseId: first.leaseId,
+    leaseToken: first.leaseToken,
+    clock: fixedClock("2026-08-01T01:02:03.000Z"),
+  });
+  assert.equal(replayed.reason, "bootstrap_released");
+  assert.equal(replayed.leaseId, first.leaseId);
+
+  const renewed = await egoBootstrapLease({
+    action: "renew",
+    transportStateDir,
+    owner: OWNER_B,
+    leaseId: second.leaseId,
+    leaseToken: second.leaseToken,
+    clock: fixedClock("2026-08-01T01:02:04.000Z"),
+  });
+  assert.equal(renewed.reason, "bootstrap_renewed");
 });
 
 test("Ego bootstrap state rejects symlinked records and shared directories", async () => {

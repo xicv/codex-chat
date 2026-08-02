@@ -60,6 +60,11 @@ that introduced each change; merge-only commits are omitted.
 
 ### Fixed
 
+- Transport-attempt side effects are now crash-resumable across the gap between
+  Browser/Ego state mutation and the attempt checkpoint. Write-ahead pending
+  effects bind the original request digest, exact resolution receipts make
+  replay idempotent, and stale replay cannot mutate a newer coordinator's
+  active Browser claim or Ego lease.
 - A pre-send `Transport closed` circuit no longer blocks the same healthy host
   generation forever. It now returns an exact five-minute retry time and
   permits one serialized zero-egress half-open probe after cooldown, while a

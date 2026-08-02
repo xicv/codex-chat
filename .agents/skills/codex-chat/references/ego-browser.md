@@ -345,15 +345,16 @@ If an upload or send action might have run, record or preserve
 ## Submit one bound turn
 
 Create and persist the durable `send_reserved` marker, exact task envelope,
-payload digest, and bound task-space and target IDs in the controller before
-invoking Ego. Do not generate the marker inside a browser heredoc. A missing
-terminal log must not make the delivery identity disappear with the browser
-process.
+context digest, transport-manifest digest, and bound task-space and target IDs
+in the controller before invoking Ego. Do not generate the marker inside a
+browser heredoc. A missing terminal log must not make the delivery identity
+disappear with the browser process.
 
-Use separate bounded heredocs for compose, submit, and observe. Each heredoc
-must take the already-persisted marker and task envelope as inputs and must use
-the same bound numeric task-space ID. Activate that exact task space using the
-ownership-appropriate helper from the installed Ego skill:
+Use separate bounded heredocs for optional attachment upload, compose, submit,
+and observe. Each heredoc must take the already-persisted marker and transport
+manifest as inputs and must use the same bound numeric task-space ID. Activate
+that exact task space using the ownership-appropriate helper from the
+installed Ego skill:
 `useOrCreateTaskSpace(taskSpaceId)` normally, or
 `takeOverTaskSpace(taskSpaceId)` only after a confirmed user handoff. Before
 reading or mutating the page, reselect the bound target by listing tabs,
@@ -362,15 +363,41 @@ Perform this before every compose, submit, and observe command. If either
 binding is absent, stop; never create or fall back to another task space or
 tab.
 
-Read an envelope file with an ESM-safe dynamic import:
+Read and digest-check the bound transport manifest with ESM-safe dynamic
+imports, then use only its planned composer text:
 
 ```js
 const { readFile } = await import("node:fs/promises")
-const taskEnvelope = await readFile(taskEnvelopePath, "utf8")
+const { createHash } = await import("node:crypto")
+const transportBytes = await readFile(transportManifestPath)
+const actualTransportSha256 = createHash("sha256")
+  .update(transportBytes)
+  .digest("hex")
+if (actualTransportSha256 !== expectedTransportManifestSha256) {
+  throw new Error("bound transport manifest changed")
+}
+const transportManifest = JSON.parse(transportBytes)
+if (!transportManifest.reservationEligible ||
+    transportManifest.strategy === "stop" ||
+    typeof transportManifest.composer?.text !== "string") {
+  throw new Error("transport manifest is not eligible")
+}
+const taskEnvelope = transportManifest.composer.text
 ```
 
 Do not use CommonJS `require` in an Ego script that also uses top-level `await`;
 Node rejects that ambiguous module format before any browser action.
+
+If the bound strategy is `attachment-context`, use one dedicated upload
+heredoc after `send_reserved` and before compose. Re-hash the exact local
+context artifact and require its bytes, SHA-256, and ordinal zero to match the
+manifest. Reselect the exact task space and target, reconcile the outbound
+marker as absent, require the supported composer to remain empty, locate one
+supported file input without using draft text, and call `uploadFile` exactly
+once. Verify one bounded provider attachment observation before continuing.
+If upload output is missing, the control state changes, or acceptance is not
+conclusive, stop without another upload or send. An `inline-context` strategy
+must perform no upload. Never change strategies inside Ego.
 
 In the compose heredoc:
 
@@ -397,25 +424,27 @@ In the compose heredoc:
    it as unsupported composer DOM and stop without clearing, typing, or
    sending. Never use `fillInput` for ChatGPT's `contenteditable`: it appends
    to the existing ProseMirror content instead of reliably replacing it.
-3. If the normalized composer is empty, focus it and type the reserved envelope.
+3. If the normalized composer is empty, focus it and type the planned composer
+   envelope.
    Only call `typeText(taskEnvelope)` when the normalized composer is empty.
-4. If the normalized composer exactly equals the expected task envelope, reuse
-   it without typing.
+4. If the normalized composer exactly equals the expected planned envelope,
+   reuse it without typing.
 5. For every other non-empty value, stop. Never clear or overwrite an unknown
    draft, even when it appears to come from an earlier failed run. Never ask
    the user to submit an unknown draft: submitting it could send unrelated
    content. Report that the bound collaborator tab diverged and leave it for
    user inspection without creating another tab or run.
 6. Before leaving the compose heredoc, verify that the composer text exactly
-   equals the expected task envelope, that the durable marker occurs once in
-   it and zero times in submitted user turns, and that there is exactly one
-   enabled send control. Derive a stable `sendLocator` from that enabled
-   control and return only this bounded verification evidence.
+   equals the manifest's composer text and digest, that the durable marker
+   occurs once in it and zero times in submitted user turns, and that there is
+   exactly one enabled send control. Derive a stable `sendLocator` from that
+   enabled control and return only this bounded verification evidence.
 
-In the separate submit heredoc, re-read the same task space and repeat every
-pre-submit invariant: exact task envelope, one composer marker, no submitted
-user marker, and exactly one enabled send control matching `sendLocator`. Then
-perform the single mutating action:
+In the separate submit heredoc, re-read the transport manifest and same task
+space and repeat every pre-submit invariant: exact planned composer envelope,
+one composer marker, no submitted user marker, required attachment evidence
+when applicable, and exactly one enabled send control matching `sendLocator`.
+Then perform the single mutating action:
 
 ```js
 await click(sendLocator, { label: 'send reserved turn' })

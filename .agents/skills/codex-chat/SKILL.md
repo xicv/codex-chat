@@ -180,6 +180,39 @@ The helper rejects secrets, sensitive filenames, symlinks, traversal, unsafe tex
 
 The output parent must already exist, must be a real directory outside the source root, and the output path must not already exist. The helper never replaces an existing context artifact or source file. The installed CLI always resolves and identity-checks `gitleaks`; it does not accept a scanner override or a scan bypass.
 
+Persist the exact task envelope as a UTF-8/LF file, then create a size-aware
+transport manifest before run creation:
+
+```bash
+node <skill>/scripts/codex-chat.mjs transport-plan \
+  --root "$PWD" \
+  --context /private/tmp/codex-chat-context.json \
+  --context-sha256 <context-sha256> \
+  --task-envelope /private/tmp/codex-chat-task.txt \
+  --task-envelope-sha256 <task-envelope-sha256> \
+  --transport-kind <selected-transport> \
+  --upload-capability <available|unavailable|unknown> \
+  --output /private/tmp/codex-chat-transport.json
+```
+
+Set upload capability to `available` only after the already-selected transport
+has exposed a supported upload control in a read-only capability observation.
+The helper re-reads, digest-checks, and secret-scans the exact context, task,
+and generated manifest. Small contexts become one exact inline composer
+envelope. Larger contexts select one attachment only when upload is available;
+otherwise the plan stops before run creation or browser mutation. Oversized
+task instructions always stop. Bind the returned manifest SHA-256 as
+`transportManifestSha256` in hardened `prepared` and `send_reserved` events.
+
+The manifest's `composer.text` is the only planned composer text. For an
+attachment strategy, upload only the exact context digest at ordinal zero and
+then compose that exact text. `reservationEligible` permits creating the
+durable reservation; it is not send authority. Every plan keeps
+`actionAuthorized: false`, `resendAuthorized: false`, and
+`modelVisible: "unknown"`. The browser adapter may perform its one planned
+action only after `send_reserved` is durable. A missing or ambiguous upload
+result never authorizes another upload or a send without the required context.
+
 When code, text, images, PDFs, documents, spreadsheets, data, or lossy
 derivatives must be related, create a `CODEX_CHAT_MANIFEST_PLAN_V2` and run:
 
@@ -301,6 +334,12 @@ locator, observation time, evidence class, and provider-message fingerprint
 when observable; confirmation leases that locator too. Idempotency keys and
 outbound markers are bound to their exact operation and cannot be reused for
 different data. Do not route by conversation title or model label.
+
+Read the bound transport manifest again immediately before browser mutation.
+Its digest must match the run, its strategy must not be `stop`, and its exact
+`composer.text` must still match the recorded composer digest. For an
+attachment strategy, the exact context artifact and ordinal must match too.
+Never improvise a different inline/attachment choice after reservation.
 
 For the bound Ego transport, follow
 [ego-browser.md](references/ego-browser.md#submit-one-bound-turn) exactly. Keep

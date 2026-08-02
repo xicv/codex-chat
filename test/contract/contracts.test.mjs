@@ -12,6 +12,7 @@ import { runCli, tempDir, writeFixture } from "../helpers.mjs";
 import {
   LIMITS_EGO_BOOTSTRAP_V1,
   LIMITS_DISTRIBUTED_V1,
+  LIMITS_TRANSPORT_MANIFEST_V1,
   LIMITS_V1,
   LIMITS_V2,
 } from "../../.agents/skills/codex-chat/scripts/lib/limits.mjs";
@@ -314,14 +315,14 @@ test("Ego submission classifies stale drafts and preserves at-most-once reconcil
   assert.match(submit, /durable `send_reserved` marker/);
   assert.match(
     submit,
-    /Do not generate the marker inside a browser heredoc/,
+    /Do not generate the marker inside a\s+browser heredoc/,
   );
   assert.match(submit, /Never use `fillInput` for ChatGPT's `contenteditable`/);
   assert.match(submit, /classify any stale draft/);
   assert.match(submit, /Never clear or overwrite an unknown\s+draft/);
   assert.match(
     submit,
-    /exactly equals the expected task envelope[\s\S]*reuse\s+it without typing/,
+    /exactly equals the expected planned envelope[\s\S]*reuse\s+it without typing/,
   );
   assert.match(
     submit,
@@ -330,14 +331,21 @@ test("Ego submission classifies stale drafts and preserves at-most-once reconcil
   assert.match(submit, /typeText\(taskEnvelope\)/);
   assert.match(
     submit,
-    /composer text exactly\s+equals the expected task envelope/,
+    /composer text exactly\s+equals the manifest's composer text and digest/,
   );
   assert.match(submit, /exactly one\s+enabled send control/);
   assert.match(submit, /click\(sendLocator/);
   assert.match(submit, /Do not use Enter or `pressKey` to submit/);
   assert.match(
     submit,
-    /separate bounded heredocs for compose, submit, and observe/,
+    /separate bounded heredocs for optional attachment upload, compose, submit,\s+and observe/,
+  );
+  assert.match(submit, /expectedTransportManifestSha256/);
+  assert.match(submit, /transportManifest\.composer\.text/);
+  assert.match(submit, /call `uploadFile` exactly\s+once/);
+  assert.match(
+    submit,
+    /If upload output is missing[\s\S]*stop without another upload or send/,
   );
   assert.match(
     submit,
@@ -385,6 +393,12 @@ test("Ego canonicalizes multiline ProseMirror drafts without innerText paragraph
 test("normative JSON schemas are valid and expose the v1 required fields", async () => {
   const expectations = {
     "collab-context-v1.schema.json": ["kind", "protocolVersion", "rootLabel", "files"],
+    "transport-manifest-v1.schema.json": [
+      "kind", "protocolVersion", "transportKind", "uploadCapability",
+      "strategy", "failureReason", "reservationEligible", "context",
+      "taskEnvelope", "composer", "attachment", "thresholds",
+      "modelVisible", "actionAuthorized", "resendAuthorized",
+    ],
     "collab-result-v1.schema.json": [
       "kind", "protocolVersion", "runId", "turnId", "contextSha256",
       "complete", "artifactKind", "summary", "claims",
@@ -467,6 +481,12 @@ test("versioned implementation limits agree with normative schemas", async () =>
   const verifySchema = JSON.parse(
     await readFile(path.join(schemaDir, "verify-plan-v1.schema.json"), "utf8"),
   );
+  const transportManifestSchema = JSON.parse(
+    await readFile(
+      path.join(schemaDir, "transport-manifest-v1.schema.json"),
+      "utf8",
+    ),
+  );
   const deliveryPlanSchema = JSON.parse(
     await readFile(
       path.join(schemaDir, "delivery-receipt-plan-v2.schema.json"),
@@ -486,6 +506,28 @@ test("versioned implementation limits agree with normative schemas", async () =>
     ),
   );
   assert.equal(contextSchema.properties.files.maxItems, LIMITS_V1.pack.maxFiles);
+  assert.equal(
+    transportManifestSchema.properties.context.properties.bytes.maximum,
+    LIMITS_TRANSPORT_MANIFEST_V1.maxContextBytes,
+  );
+  assert.equal(
+    transportManifestSchema.properties.taskEnvelope.properties.bytes.maximum,
+    LIMITS_TRANSPORT_MANIFEST_V1.maxTaskEnvelopeInputBytes,
+  );
+  assert.equal(
+    transportManifestSchema.properties.composer.properties.bytes.maximum,
+    LIMITS_TRANSPORT_MANIFEST_V1.maxInlineComposerBytes,
+  );
+  assert.equal(
+    transportManifestSchema.properties.thresholds.properties
+      .maxTaskEnvelopeComposerBytes.const,
+    LIMITS_TRANSPORT_MANIFEST_V1.maxTaskEnvelopeComposerBytes,
+  );
+  assert.equal(
+    transportManifestSchema.properties.thresholds.properties
+      .maxInlineContextBytes.const,
+    LIMITS_TRANSPORT_MANIFEST_V1.maxInlineContextBytes,
+  );
   assert.equal(
     verifySchema.properties.timeoutMs.maximum,
     LIMITS_V1.verify.maxTimeoutMs,
@@ -629,6 +671,7 @@ test("CLI exposes machine-readable help and version without repository context",
       "transport-gate",
       "ego-bootstrap-lease",
       "pack",
+      "transport-plan",
       "manifest",
       "delivery-receipt",
       "terminal-capture",
@@ -648,6 +691,56 @@ test("CLI exposes machine-readable help and version without repository context",
   assert.equal(version.json.ok, true);
   assert.equal(version.json.command, "version");
   assert.match(version.json.data.version, /^\d+\.\d+\.\d+$/);
+});
+
+test("installed CLI creates a digest-bound size-aware transport manifest", async () => {
+  const root = await tempDir();
+  const artifacts = await tempDir();
+  const source = "export const answer = 42;\n";
+  const context = `${JSON.stringify({
+    kind: "COLLAB_CONTEXT_V1",
+    protocolVersion: 1,
+    rootLabel: "contract",
+    files: [{
+      path: "src/answer.mjs",
+      bytes: Buffer.byteLength(source),
+      sha256: sha256(source),
+      content: source,
+    }],
+  })}\n`;
+  const taskEnvelope = "Review this exact bounded context.\n";
+  const contextPath = await writeFixture(artifacts, "context.json", context);
+  const taskEnvelopePath = await writeFixture(
+    artifacts,
+    "task-envelope.txt",
+    taskEnvelope,
+  );
+  const output = path.join(artifacts, "transport-manifest.json");
+
+  const result = await runCli([
+    "transport-plan",
+    "--root", root,
+    "--context", contextPath,
+    "--context-sha256", sha256(context),
+    "--task-envelope", taskEnvelopePath,
+    "--task-envelope-sha256", sha256(taskEnvelope),
+    "--transport-kind", "ego-browser",
+    "--upload-capability", "unknown",
+    "--output", output,
+  ]);
+
+  assert.equal(result.code, 0, JSON.stringify(result.json));
+  assert.equal(result.json.command, "transport-plan");
+  assert.equal(result.json.data.strategy, "inline-context");
+  assert.equal(result.json.data.reservationEligible, true);
+  assert.equal(result.json.data.actionAuthorized, false);
+  assert.equal(result.json.data.resendAuthorized, false);
+  assert.equal(result.json.data.modelVisible, "unknown");
+  assert.equal(result.json.data.scanner.clean, true);
+  assert.equal(
+    result.json.data.sha256,
+    sha256(await readFile(result.json.data.artifactPath)),
+  );
 });
 
 test("installed CLI creates a scanned typed context manifest", async () => {

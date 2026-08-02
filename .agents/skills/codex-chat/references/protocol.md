@@ -174,6 +174,28 @@ namespace, and the optional typed transport-manifest digest. The legacy
 is not described as the full outbound prompt. A correction turn may use a new
 task-envelope digest while retaining the immutable context binding.
 
+Before creating a new hardened run, `transport-plan` re-reads and
+digest-checks the portable context and exact task envelope, scans both with the
+generated `CODEX_CHAT_TRANSPORT_MANIFEST_V1`, and chooses one deterministic
+strategy. A context no larger than 24,576 bytes is embedded in one canonical
+composer envelope only when the complete envelope remains within 49,152
+bytes. Its task/context boundaries carry an identifier derived from both exact
+input digests, so matching words inside source files cannot impersonate the
+wrapper. Larger context requires upload capability observed as available and
+is bound as attachment ordinal zero. Unknown or unavailable upload stops, as
+does a composer task envelope over 32,768 bytes. The fixed thresholds are
+project protocol limits, not provider capacity claims.
+
+The manifest binds the selected transport, both input digests and byte counts,
+the exact composer text/digest, optional attachment digest/ordinal, and the
+decision thresholds. `prepared` and the first `send_reserved` bind its digest
+as `transportManifestSha256`. The plan is deterministic and create-only but
+always reports `actionAuthorized: false`, `resendAuthorized: false`, and
+`modelVisible: "unknown"`. Only a later durable reservation and the bound
+transport adapter may perform the selected action once. Changed plan bytes,
+capability, strategy, composer text, context artifact, or attachment ordinal
+stop instead of triggering an improvised fallback.
+
 Coordinated runs add immutable `workspaceId`, `coordinatorId`, `workUnitId`,
 and `agentId` routing. A hardened reservation takes a state-directory-wide
 lease on `(providerNamespace, conversationIdentity)`. Confirmation also binds
@@ -236,9 +258,11 @@ identity nor model visibility. The command does not upload, send, mutate the
 manifest or ledger, accept the work, or authorize a retry.
 
 `parent.contextSha256`, `parent.turnId`, and `checkpointNamespace` link
-continuation context without rewriting earlier artifacts. The sidecar does not
-yet implement delta reconstruction or attachment upload. Model-visibility
-evidence is also deferred to a future append-only artifact.
+continuation context without rewriting earlier artifacts. The CLI does not
+control attachment upload; a bound browser adapter may perform the one planned
+upload and must record transport evidence afterward. Delta reconstruction is
+not implemented. Model-visibility evidence is also deferred to a future
+append-only artifact.
 
 ## External result
 

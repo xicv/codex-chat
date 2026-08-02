@@ -120,6 +120,11 @@ use a session authenticated by the user.
     the normal conversation lease exists. Ego's bounded browser observations
     and live cleanup identities are evaluated by a strict local executable
     decision core, not duplicated prose-only browser branches.
+15. **Plan exact egress by size.** A scanned transport manifest binds the
+    context, task, transport, exact composer bytes, and optional ordinal-zero
+    attachment before run creation. Small context is inlined; larger context
+    requires an observed upload capability. The plan never authorizes action,
+    resend, or a model-visibility claim.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
@@ -297,11 +302,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 103/103 |
-| Contract tests | 28/28 |
+| Unit tests | 151/151 |
+| Contract tests | 35/35 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 3/3 |
-| Aggregate test gate | 139/139 |
+| Aggregate test gate | 194/194 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -373,6 +378,7 @@ directory. The CLI never replaces an existing artifact.
 | `preflight` | Validate source selection, state location, VCS metadata, and scanner availability |
 | `transport-gate` | Serialize primary-browser health probes, remember a closed host generation, neutrally release an unused claim, and verify that recovery changed the browser host before probing again |
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
+| `transport-plan` | Create and scan a digest-bound size-aware composer/attachment plan without authorizing browser action |
 | `manifest` | Create and scan a typed `COLLAB_CONTEXT_MANIFEST_V2` provenance sidecar |
 | `delivery-receipt` | Create and scan immutable, digest-bound transport evidence without claiming model visibility |
 | `terminal-capture` | Verify, scan, and publish create-once full-response and result evidence |
@@ -521,10 +527,11 @@ Security assumptions and exclusions are documented in
 - Ego fallback depends on the separately installed Ego Lite app, skill, CLI,
   and user-managed login. It does not repair the primary browser transport,
   provide automatic authentication, or authorize a post-send retry.
-- The v2 manifest records typed representations, and the receipt command binds
-  observed transport acceptance or rejection. Attachment upload, delta
-  reconstruction, and proof of backend model visibility are not implemented;
-  `modelVisible` remains `unknown`.
+- The transport manifest plans one inline or capability-gated attachment path,
+  but the CLI does not control the browser. Transport adapters remain
+  responsible for the single observed upload. Delta reconstruction and proof
+  of backend model visibility are not implemented; `modelVisible` remains
+  `unknown`.
 - The distributed control plane supports clients on several hosts but has one
   authoritative single-writer process. Replicated consensus, automatic
   authority-host failover, per-principal authorization, streaming/long-poll

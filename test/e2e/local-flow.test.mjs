@@ -53,10 +53,20 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
     preparedCapsule.json.data.transportManifest.strategy,
     "inline-context",
   );
-  const contextSha256 = preparedCapsule.json.data.context.sha256;
-  const taskEnvelopeSha256 = preparedCapsule.json.data.taskEnvelope.sha256;
+  const validatedCapsule = await runCli([
+    "capsule-validate",
+    "--output-root", capsuleRoot,
+    "--capsule-id", runId,
+    "--receipt-sha256", preparedCapsule.json.data.receiptSha256,
+    "--transport-kind", "synthetic-transport",
+    "--upload-capability", "unknown",
+  ]);
+  assert.equal(validatedCapsule.code, 0, JSON.stringify(validatedCapsule.json));
+  assert.equal(validatedCapsule.json.data.valid, true);
+  const contextSha256 = validatedCapsule.json.data.context.sha256;
+  const taskEnvelopeSha256 = validatedCapsule.json.data.taskEnvelope.sha256;
   const transportManifestSha256 =
-    preparedCapsule.json.data.transportManifest.sha256;
+    validatedCapsule.json.data.transportManifest.sha256;
 
   async function record(event, sequence, expectedState, data = {}) {
     const dataPath = path.join(stateDir, `${sequence}-${event}.json`);

@@ -8,6 +8,12 @@ that introduced each change; merge-only commits are omitted.
 
 ### Added
 
+- A deep versioned protocol codec module for the outbound capsule family, with
+  canonical encoding, strict decoding, exact-key and version dispatch,
+  portable path and size policy, digest checks, and relational invariants.
+- A read-only `capsule-validate` command that opens no missing store, verifies
+  the expected receipt and every object, reconstructs the transport manifest
+  from exact input bytes, and rejects crossed transport selection before send.
 - Atomic capsule preparation that snapshots source and task bytes once,
   derives the transport manifest from those exact bytes, scans the complete
   capsule, publishes content-addressed artifacts first, and commits a

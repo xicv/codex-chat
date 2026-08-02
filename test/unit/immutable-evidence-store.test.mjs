@@ -11,6 +11,7 @@ import test from "node:test";
 import {
   openImmutableEvidenceStore,
   publishImmutableEvidence,
+  readImmutableEvidence,
 } from "../../.agents/skills/codex-chat/scripts/lib/immutable-evidence-store.mjs";
 import { tempDir } from "../helpers.mjs";
 
@@ -191,5 +192,29 @@ test("a replaced evidence root fails before publishing through a symlink", async
   await assert.rejects(
     publishImmutableEvidence(publication),
     { code: CODES.parentChanged },
+  );
+});
+
+test("immutable evidence reads require an explicit positive byte limit", async () => {
+  const { publication, store } = await fixture();
+  await publishImmutableEvidence(publication);
+
+  await assert.rejects(
+    readImmutableEvidence({
+      store,
+      relativePath: "objects/object-a.txt",
+      maxBytes: 0,
+      conflictCode: "TEST_EVIDENCE_OBJECT_CONFLICT",
+    }),
+    { code: "IMMUTABLE_EVIDENCE_INPUT_INVALID" },
+  );
+  await assert.rejects(
+    readImmutableEvidence({
+      store,
+      relativePath: "objects/object-a.txt",
+      maxBytes: Number.MAX_SAFE_INTEGER,
+      conflictCode: "TEST_EVIDENCE_OBJECT_CONFLICT",
+    }),
+    { code: "IMMUTABLE_EVIDENCE_INPUT_INVALID" },
   );
 });

@@ -129,6 +129,9 @@ use a session authenticated by the user.
     content-addressed and scanned before a create-once capsule receipt becomes
     authoritative. Concurrent identical writers converge; divergent or
     interrupted writers cannot expose a mixed capsule generation.
+17. **Decode protocols in one place.** A strict versioned codec module owns
+    canonical encoding, exact-key validation, version dispatch, size limits,
+    and relational invariants for the complete outbound capsule family.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
@@ -306,11 +309,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 200/200 |
+| Unit tests | 214/214 |
 | Contract tests | 38/38 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 3/3 |
-| Aggregate test gate | 246/246 |
+| Aggregate test gate | 260/260 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -343,6 +346,13 @@ node .agents/skills/codex-chat/scripts/codex-chat.mjs prepare-capsule \
   --transport-kind browser \
   --upload-capability unknown \
   --output-root /private/tmp/codex-chat-capsules
+
+node .agents/skills/codex-chat/scripts/codex-chat.mjs capsule-validate \
+  --output-root /private/tmp/codex-chat-capsules \
+  --capsule-id <intended-run-id> \
+  --receipt-sha256 <capsule-receipt-sha256> \
+  --transport-kind browser \
+  --upload-capability unknown
 
 node .agents/skills/codex-chat/scripts/codex-chat.mjs manifest \
   --root "$PWD" \
@@ -381,7 +391,10 @@ Atomic capsule preparation uses a private store outside the source root. Its
 content-addressed context, task-envelope, and transport-manifest artifacts are
 non-authoritative until the create-once capsule receipt is published last.
 Exact replay recovers partial publication; a divergent snapshot under the same
-capsule ID fails closed. The lower-level `pack` and `transport-plan` commands
+capsule ID fails closed. Read-only capsule validation opens no missing store,
+rechecks every object, strictly decodes the three versioned artifacts,
+reconstructs the transport manifest, and rejects a crossed selected transport.
+The lower-level `pack` and `transport-plan` commands
 remain create-only compatibility primitives. Delivery receipts use
 create-only, content-addressed paths beneath the durable run state directory.
 Delivery receipts and terminal captures share one internal
@@ -396,6 +409,7 @@ replay, and final tamper checks. The CLI never replaces an existing artifact.
 | `transport-gate` | Serialize primary-browser health probes, remember a closed host generation, neutrally release an unused claim, and allow one bounded half-open probe after a host restart or cooldown |
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
 | `prepare-capsule` | Atomically prepare, scan, content-address, and commit one context/task/transport capsule with idempotent crash recovery |
+| `capsule-validate` | Read-only revalidation of the authoritative receipt, all capsule objects, codec invariants, and selected transport |
 | `transport-plan` | Create and scan a digest-bound size-aware composer/attachment plan without authorizing browser action |
 | `manifest` | Create and scan a typed `COLLAB_CONTEXT_MANIFEST_V2` provenance sidecar |
 | `delivery-receipt` | Create and scan immutable, digest-bound transport evidence without claiming model visibility |

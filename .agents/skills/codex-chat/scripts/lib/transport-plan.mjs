@@ -11,16 +11,15 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fail } from "./errors.mjs";
-import {
-  LIMITS_TRANSPORT_MANIFEST_V1,
-  LIMITS_V1,
-} from "./limits.mjs";
+import { LIMITS_TRANSPORT_MANIFEST_V1 } from "./limits.mjs";
 import {
   atomicWrite,
   inspectOutput,
-  isSensitivePath,
 } from "./pack.mjs";
-import { validateRelativePath } from "./preflight.mjs";
+import {
+  decodeProtocolArtifact,
+  encodeProtocolArtifact,
+} from "./protocol-codecs.mjs";
 import { scanDirectory } from "./scanner.mjs";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -66,96 +65,16 @@ function decodeText(bytes, code, label) {
 }
 
 function parseContext(bytes) {
-  const text = decodeText(
-    bytes,
-    "TRANSPORT_CONTEXT_INVALID",
-    "Transport context",
-  );
-  let value;
   try {
-    value = JSON.parse(text);
-  } catch {
+    decodeProtocolArtifact(bytes, { expectedKind: "COLLAB_CONTEXT_V1" });
+    return Buffer.from(bytes).toString("utf8");
+  } catch (error) {
+    if (!error?.code?.startsWith("PROTOCOL_")) throw error;
     fail(
       "TRANSPORT_CONTEXT_INVALID",
-      "Transport context must be a COLLAB_CONTEXT_V1 JSON artifact.",
+      "Transport context must be a canonical COLLAB_CONTEXT_V1 artifact.",
     );
   }
-  const validTopLevel = exactKeys(value, [
-    "kind",
-    "protocolVersion",
-    "rootLabel",
-    "files",
-  ]) &&
-    value.kind === "COLLAB_CONTEXT_V1" &&
-    value.protocolVersion === 1 &&
-    typeof value.rootLabel === "string" &&
-    value.rootLabel.length > 0 &&
-    Buffer.byteLength(value.rootLabel) <= 4096 &&
-    !/[\u0000-\u001f\u007f]/u.test(value.rootLabel) &&
-    Array.isArray(value.files) &&
-    value.files.length > 0 &&
-    value.files.length <= LIMITS_V1.pack.maxFiles &&
-    `${JSON.stringify(value)}\n` === text;
-  if (!validTopLevel) {
-    fail(
-      "TRANSPORT_CONTEXT_INVALID",
-      "Transport context must be a COLLAB_CONTEXT_V1 JSON artifact.",
-    );
-  }
-  let totalBytes = 0;
-  const paths = [];
-  const collisionKeys = new Set();
-  for (const file of value.files) {
-    let normalizedPath = null;
-    try {
-      normalizedPath = validateRelativePath(file?.path);
-    } catch {
-      // Reframe the reusable path validator as one stable transport error.
-    }
-    const contentBytes = typeof file?.content === "string"
-      ? Buffer.from(file.content)
-      : null;
-    totalBytes += Number.isSafeInteger(file?.bytes) ? file.bytes : 0;
-    const collisionKey = normalizedPath?.normalize("NFC")
-      .toLocaleLowerCase("en-US") ?? null;
-    if (
-      !exactKeys(file, ["path", "bytes", "sha256", "content"]) ||
-      normalizedPath !== file.path ||
-      isSensitivePath(file.path) ||
-      !Number.isSafeInteger(file.bytes) ||
-      file.bytes < 0 ||
-      file.bytes > LIMITS_V1.pack.maxFileBytes ||
-      contentBytes === null ||
-      contentBytes.toString("utf8") !== file.content ||
-      contentBytes.byteLength !== file.bytes ||
-      file.content.includes("\0") ||
-      file.content.includes("\r") ||
-      !SHA256.test(file.sha256 ?? "") ||
-      sha256(contentBytes) !== file.sha256 ||
-      collisionKey === null ||
-      collisionKeys.has(collisionKey)
-    ) {
-      fail(
-        "TRANSPORT_CONTEXT_INVALID",
-        "Transport context contains an invalid file representation.",
-      );
-    }
-    collisionKeys.add(collisionKey);
-    paths.push(file.path);
-  }
-  const sortedPaths = [...paths].sort((left, right) =>
-    Buffer.compare(Buffer.from(left), Buffer.from(right))
-  );
-  if (
-    totalBytes > LIMITS_V1.pack.maxTotalBytes ||
-    paths.some((filePath, index) => filePath !== sortedPaths[index])
-  ) {
-    fail(
-      "TRANSPORT_CONTEXT_INVALID",
-      "Transport context file order or aggregate size is invalid.",
-    );
-  }
-  return text;
 }
 
 function inlineComposerText(
@@ -396,8 +315,8 @@ export async function createTransportManifest({
     transportKind,
     uploadCapability,
   });
-  const serialized = `${JSON.stringify(manifest)}\n`;
-  if (Buffer.byteLength(serialized) > MAX_ARTIFACT_BYTES) {
+  const serialized = encodeProtocolArtifact(manifest);
+  if (serialized.byteLength > MAX_ARTIFACT_BYTES) {
     fail(
       "TRANSPORT_MANIFEST_TOO_LARGE",
       `Transport manifest exceeds ${MAX_ARTIFACT_BYTES} bytes.`,
@@ -427,7 +346,7 @@ export async function createTransportManifest({
 
   return {
     artifactPath: outputInfo.target,
-    size: Buffer.byteLength(serialized),
+    size: serialized.byteLength,
     sha256: sha256(serialized),
     strategy: manifest.strategy,
     failureReason: manifest.failureReason,

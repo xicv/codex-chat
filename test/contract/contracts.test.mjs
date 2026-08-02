@@ -135,11 +135,14 @@ test("skill commits one atomic capsule generation before run creation", async ()
   assert.ok(preparationStart < runStart);
   const preparation = instructions.slice(preparationStart, runStart);
   assert.match(preparation, /prepare-capsule/);
+  assert.match(preparation, /capsule-validate/);
   assert.match(preparation, /writes the create-once capsule receipt last/);
   assert.match(preparation, /Artifacts without that receipt\s+are incomplete/);
   assert.match(preparation, /Concurrent coordinators therefore converge/);
   assert.match(preparation, /different snapshot under the same\s+capsule ID fails closed/);
   assert.match(preparation, /do not use their separate outputs as a newly\s+prepared capsule/);
+  assert.match(preparation, /opens no\s+missing store/);
+  assert.match(preparation, /actionAuthorized` and `resendAuthorized` remain false/);
 });
 
 test("a bounded external-response wait degrades independence without changing delivery state", async () => {
@@ -753,6 +756,7 @@ test("CLI exposes machine-readable help and version without repository context",
       "ego-bootstrap-lease",
       "pack",
       "prepare-capsule",
+      "capsule-validate",
       "transport-plan",
       "manifest",
       "delivery-receipt",

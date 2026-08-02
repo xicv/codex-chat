@@ -14,9 +14,11 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fail } from "./errors.mjs";
+import { isSensitivePath } from "./path-policy.mjs";
 import { validateIncludes } from "./preflight.mjs";
 import { scanDirectory } from "./scanner.mjs";
 import { LIMITS_V1 } from "./limits.mjs";
+import { encodeProtocolArtifact } from "./protocol-codecs.mjs";
 
 const {
   maxFileBytes: DEFAULT_MAX_FILE_BYTES,
@@ -26,21 +28,6 @@ const {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-export function isSensitivePath(relativePath) {
-  const segments = relativePath.toLowerCase().split("/");
-  return segments.some((segment) =>
-    segment === ".env" ||
-    segment.startsWith(".env.") ||
-    [
-      ".git", ".hg", ".svn", ".jj", ".codex", ".codex-chat",
-      "node_modules", ".cache", "cache", "coverage", "dist", "build",
-      "browser-profile", "browser_state", "browser-state",
-    ].includes(segment) ||
-    /^(id_rsa|id_ed25519|credentials|cookies?|tokens?|auth[-_.]?state)(\.|$)/.test(segment) ||
-    /\.(pem|key|p12|pfx|kdbx|sqlite|sqlite3|db|db3|mdb|accdb)$/.test(segment)
-  );
 }
 
 async function collect(root, relativePath, output) {
@@ -280,7 +267,7 @@ async function buildPackedContextArtifact({
     rootLabel: path.basename(absoluteRoot),
     files,
   };
-  const bytes = Buffer.from(`${JSON.stringify(artifact)}\n`);
+  const bytes = encodeProtocolArtifact(artifact);
   if (bytes.byteLength > maxArtifactBytes) {
     fail("ARTIFACT_TOO_LARGE", `Serialized artifact exceeds ${maxArtifactBytes} bytes.`);
   }

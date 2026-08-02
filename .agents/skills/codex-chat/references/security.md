@@ -15,6 +15,10 @@
   derives the transport manifest from those exact bytes, scans all artifacts
   and the capsule receipt together, publishes content-addressed objects first,
   and makes the create-once receipt authoritative last.
+- One versioned protocol codec module strictly encodes and decodes the outbound
+  context, transport manifest, and capsule receipt. It rejects unknown
+  versions, extra fields, noncanonical JSON/LF, invalid digests and paths, and
+  inconsistent strategy fields before callers use decoded values.
 - A v2 delivery receipt records digest-bound transport observations only. It
   does not upload, send, prove backend model visibility, or authorize resend.
 - A hardened terminal capture receipt stores and binds the full response and
@@ -67,6 +71,13 @@ It keeps directory identities encapsulated, opens existing artifacts with
 publishes exact artifacts before the create-once authoritative slot, and
 revalidates all artifact bytes on idempotent replay. A partial artifact set is
 non-authoritative and can only be completed by the same exact slot bytes.
+
+Capsule validation is mutation-free: it refuses to create a missing store,
+binds the expected receipt digest and selected transport/capability, no-follow
+reads every content-addressed object, decodes each through the versioned codec,
+and reconstructs the transport decision from the exact context/task bytes. It
+must pass after preparation and immediately before browser mutation, but never
+grants upload, send, resend, or model-visibility authority.
 
 Transport planning reads both egress inputs without following the final path,
 checks the caller-supplied digests, rejects invalid UTF-8/LF task bytes and

@@ -81,8 +81,10 @@ function validateRelativePath(value, label) {
   return value;
 }
 
-async function prepareRealDirectory(directory, code) {
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+async function prepareRealDirectory(directory, code, create) {
+  if (create) {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+  }
   const info = await lstat(directory).catch(() => null);
   if (
     !info?.isDirectory() ||
@@ -103,9 +105,14 @@ export async function openImmutableEvidenceStore({
   root,
   directories = [],
   codes,
+  create = true,
 }) {
   const policy = validateCodes(codes);
-  if (!Array.isArray(directories) || directories.length > 32) {
+  if (
+    !Array.isArray(directories) ||
+    directories.length > 32 ||
+    typeof create !== "boolean"
+  ) {
     fail(
       "IMMUTABLE_EVIDENCE_POLICY_INVALID",
       "Immutable evidence directory policy is malformed.",
@@ -130,6 +137,7 @@ export async function openImmutableEvidenceStore({
   const rootInfo = await prepareRealDirectory(
     path.join(canonicalParent, path.basename(requestedRoot)),
     policy.directoryInvalid,
+    create,
   );
   const identities = new Map([
     [rootInfo.canonical, rootInfo.identity],
@@ -147,6 +155,7 @@ export async function openImmutableEvidenceStore({
     const prepared = await prepareRealDirectory(
       path.join(rootInfo.canonical, relative),
       policy.directoryInvalid,
+      create,
     );
     if (!prepared.canonical.startsWith(`${rootInfo.canonical}${path.sep}`)) {
       fail(
@@ -346,6 +355,34 @@ async function readExisting(filePath, maxBytes, conflictCode) {
   } finally {
     await handle?.close();
   }
+}
+
+export async function readImmutableEvidence({
+  store,
+  relativePath,
+  maxBytes,
+  conflictCode,
+}) {
+  if (
+    !STORES.has(store) ||
+    !validCode(conflictCode) ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 1 ||
+    maxBytes > MAX_SCAN_BYTES
+  ) {
+    fail(
+      "IMMUTABLE_EVIDENCE_INPUT_INVALID",
+      "Immutable evidence read policy is malformed.",
+    );
+  }
+  const target = targetFor(store, relativePath, "Evidence");
+  await assertStoreIdentity(store);
+  const bytes = await readExisting(target.target, maxBytes, conflictCode);
+  if (bytes === null) {
+    fail(conflictCode, "Immutable evidence is missing.");
+  }
+  await assertStoreIdentity(store);
+  return { path: target.target, bytes };
 }
 
 async function assertExact(filePath, expected, maxBytes, conflictCode) {

@@ -3,6 +3,12 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fail } from "./errors.mjs";
 import { inspectScanner } from "./scanner.mjs";
+import { validateRelativePath } from "./path-policy.mjs";
+
+export {
+  isSensitivePath,
+  validateRelativePath,
+} from "./path-policy.mjs";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -15,36 +21,6 @@ export const AUTHORITY = Object.freeze({
   deploy: false,
   paidApiFallback: false,
 });
-
-export function validateRelativePath(value) {
-  if (typeof value !== "string" || value.length === 0) {
-    fail("PATH_INVALID", "Path must be a non-empty string.");
-  }
-  if (value.includes("\\")) {
-    fail("PATH_BACKSLASH", `Backslashes are not allowed in collaboration paths: ${value}`);
-  }
-  if (/[\u0000-\u001f\u007f]/.test(value)) {
-    fail("PATH_CONTROL", "Control characters are not allowed in collaboration paths.");
-  }
-  if (path.isAbsolute(value)) {
-    fail("PATH_ABSOLUTE", `Path must be relative: ${value}`);
-  }
-  const unicodeNormalized = value.normalize("NFC");
-  const segments = unicodeNormalized.split("/");
-  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-    fail("PATH_TRAVERSAL", `Path is not canonical relative POSIX form: ${value}`);
-  }
-  const normalized = path.posix.normalize(unicodeNormalized);
-  if (
-    normalized === "." ||
-    normalized === ".." ||
-    normalized.startsWith("../") ||
-    normalized.includes("/../")
-  ) {
-    fail("PATH_TRAVERSAL", `Path escapes the selected root: ${value}`);
-  }
-  return normalized;
-}
 
 function compareUtf8(left, right) {
   return Buffer.compare(Buffer.from(left), Buffer.from(right));

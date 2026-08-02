@@ -19,6 +19,10 @@
   context, transport manifest, and capsule receipt. It rejects unknown
   versions, extra fields, noncanonical JSON/LF, invalid digests and paths, and
   inconsistent strategy fields before callers use decoded values.
+- One trusted-file snapshot module owns no-follow opens, byte intervals,
+  allocation-safe chunked reads, optional private-mode checks, and
+  descriptor/path identity validation for outbound inputs and immutable
+  evidence. Domain callers reframe its typed failures without weakening them.
 - A v2 delivery receipt records digest-bound transport observations only. It
   does not upload, send, prove backend model visibility, or authorize resend.
 - A hardened terminal capture receipt stores and binds the full response and

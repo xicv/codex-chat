@@ -343,7 +343,10 @@ or upload-capability observation. Its `valid: true` result proves local capsule
 integrity only; `actionAuthorized` and `resendAuthorized` remain false.
 
 The helper rejects secrets, sensitive filenames, symlinks, traversal, unsafe
-text, collisions, and oversized payloads. It scans the exact staged capsule
+text, collisions, and oversized payloads. Transport inputs, terminal captures,
+delivery evidence, and immutable evidence reads use the shared trusted snapshot
+boundary: no-follow open, explicit byte interval, descriptor/path identity, and
+unchanged metadata. It scans the exact staged capsule
 with gitleaks from an isolated policy directory after removing parent
 `GITLEAKS_*` configuration and disabling payload-controlled allow comments and
 ignore files. Report the selected files, byte sizes, capsule receipt SHA-256,

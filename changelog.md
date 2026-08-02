@@ -8,6 +8,9 @@ that introduced each change; merge-only commits are omitted.
 
 ### Added
 
+- A shared trusted-file snapshot primitive for bounded no-follow reads, with
+  strict policy inputs, descriptor/path identity checks, private-mode support,
+  change detection, and allocation-safe chunked reads.
 - A deep versioned protocol codec module for the outbound capsule family, with
   canonical encoding, strict decoding, exact-key and version dispatch,
   portable path and size policy, digest checks, and relational invariants.

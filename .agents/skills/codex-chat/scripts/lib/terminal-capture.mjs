@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
 import {
   lstat,
-  open,
   realpath,
 } from "node:fs/promises";
 import path from "node:path";
@@ -15,6 +13,7 @@ import {
 import { parseResultEnvelope } from "./import.mjs";
 import { LIMITS_V1 } from "./limits.mjs";
 import { loadRun, statePaths } from "./state.mjs";
+import { readTrustedFileSnapshot } from "./trusted-file-snapshot.mjs";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const BEGIN = "CODEX_CHAT_RESULT_BEGIN";
@@ -91,50 +90,20 @@ function decodeUtf8(bytes, label) {
 }
 
 async function readRealFile(filePath, label, maxBytes) {
-  const absolute = path.resolve(filePath);
-  const info = await lstat(absolute).catch((error) => {
-    if (error.code === "ENOENT") {
+  try {
+    return (await readTrustedFileSnapshot(filePath, { maxBytes })).bytes;
+  } catch (error) {
+    if (!error?.code?.startsWith("TRUSTED_FILE_")) throw error;
+    if (error.code === "TRUSTED_FILE_MISSING") {
       fail(`${label}_MISSING`, `${label} does not exist.`);
     }
-    throw error;
-  });
-  if (!info.isFile() || info.isSymbolicLink() || info.size > maxBytes) {
+    if (error.code === "TRUSTED_FILE_CHANGED") {
+      fail(`${label}_CHANGED`, `${label} changed while it was read.`);
+    }
     fail(
       `${label}_INVALID`,
       `${label} must be a real file no larger than ${maxBytes} bytes.`,
     );
-  }
-  let handle;
-  try {
-    handle = await open(
-      absolute,
-      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
-    );
-  } catch (error) {
-    if (["ELOOP", "ENOENT", "ENOTDIR"].includes(error.code)) {
-      fail(`${label}_CHANGED`, `${label} changed before it could be opened.`);
-    }
-    throw error;
-  }
-  try {
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.size > maxBytes) {
-      fail(`${label}_INVALID`, `${label} is not an eligible regular file.`);
-    }
-    const bytes = await handle.readFile();
-    const after = await lstat(absolute).catch(() => null);
-    if (
-      !after ||
-      after.isSymbolicLink() ||
-      after.dev !== opened.dev ||
-      after.ino !== opened.ino ||
-      after.size !== opened.size
-    ) {
-      fail(`${label}_CHANGED`, `${label} changed while it was read.`);
-    }
-    return bytes;
-  } finally {
-    await handle.close();
   }
 }
 

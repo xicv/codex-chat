@@ -143,6 +143,7 @@ test("skill commits one atomic capsule generation before run creation", async ()
   assert.match(preparation, /do not use their separate outputs as a newly\s+prepared capsule/);
   assert.match(preparation, /opens no\s+missing store/);
   assert.match(preparation, /actionAuthorized` and `resendAuthorized` remain false/);
+  assert.match(preparation, /shared trusted snapshot\s+boundary/);
 });
 
 test("a bounded external-response wait degrades independence without changing delivery state", async () => {

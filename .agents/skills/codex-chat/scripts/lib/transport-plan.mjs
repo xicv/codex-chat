@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
 import {
   lstat,
   mkdtemp,
-  open,
   realpath,
   rm,
   writeFile,
@@ -21,6 +19,7 @@ import {
   encodeProtocolArtifact,
 } from "./protocol-codecs.mjs";
 import { scanDirectory } from "./scanner.mjs";
+import { readTrustedFileSnapshot } from "./trusted-file-snapshot.mjs";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -234,49 +233,20 @@ export function buildTransportManifest(input) {
 }
 
 export async function readBoundedTransportFile(filePath, label, maxBytes) {
-  const absolute = path.resolve(filePath);
-  const before = await lstat(absolute).catch(() => null);
-  if (
-    !before?.isFile() ||
-    before.isSymbolicLink() ||
-    before.size === 0 ||
-    before.size > maxBytes
-  ) {
+  try {
+    return (await readTrustedFileSnapshot(filePath, {
+      minBytes: 1,
+      maxBytes,
+    })).bytes;
+  } catch (error) {
+    if (!error?.code?.startsWith("TRUSTED_FILE_")) throw error;
+    if (error.code === "TRUSTED_FILE_CHANGED") {
+      fail(`${label}_CHANGED`, `${label.replaceAll("_", " ")} changed.`);
+    }
     fail(
       `${label}_INVALID`,
       `${label.replaceAll("_", " ")} must be a bounded real file.`,
     );
-  }
-  let handle;
-  try {
-    handle = await open(
-      absolute,
-      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
-    );
-  } catch {
-    fail(`${label}_INVALID`, `${label.replaceAll("_", " ")} changed.`);
-  }
-  try {
-    const opened = await handle.stat();
-    const bytes = await handle.readFile();
-    const after = await lstat(absolute).catch(() => null);
-    if (
-      !opened.isFile() ||
-      opened.size > maxBytes ||
-      bytes.byteLength !== opened.size ||
-      !after ||
-      after.isSymbolicLink() ||
-      after.dev !== opened.dev ||
-      after.ino !== opened.ino ||
-      after.size !== opened.size ||
-      after.mtimeMs !== opened.mtimeMs ||
-      after.ctimeMs !== opened.ctimeMs
-    ) {
-      fail(`${label}_CHANGED`, `${label.replaceAll("_", " ")} changed.`);
-    }
-    return bytes;
-  } finally {
-    await handle.close();
   }
 }
 

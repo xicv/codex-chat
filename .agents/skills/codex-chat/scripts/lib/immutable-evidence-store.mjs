@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
 import {
   lstat,
   mkdir,
   mkdtemp,
-  open,
   realpath,
   rm,
   stat,
@@ -19,6 +17,7 @@ import {
 } from "./file-lock.mjs";
 import { atomicWrite } from "./pack.mjs";
 import { scanDirectory } from "./scanner.mjs";
+import { readTrustedFileSnapshot } from "./trusted-file-snapshot.mjs";
 
 const STORES = new WeakMap();
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -294,66 +293,18 @@ function boundedBytes(value, maxBytes, label) {
 }
 
 async function readExisting(filePath, maxBytes, conflictCode) {
-  const pathInfo = await lstat(filePath).catch((error) => {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  });
-  if (pathInfo === null) return null;
-  if (
-    !pathInfo.isFile() ||
-    pathInfo.isSymbolicLink() ||
-    (pathInfo.mode & 0o077) !== 0 ||
-    pathInfo.size > maxBytes
-  ) {
-    fail(conflictCode, "Existing immutable evidence is invalid.");
-  }
-  let handle;
   try {
-    handle = await open(
-      filePath,
-      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
-    );
-    const opened = await handle.stat();
-    if (
-      !opened.isFile() ||
-      (opened.mode & 0o077) !== 0 ||
-      opened.dev !== pathInfo.dev ||
-      opened.ino !== pathInfo.ino ||
-      opened.size !== pathInfo.size ||
-      opened.mtimeMs !== pathInfo.mtimeMs ||
-      opened.ctimeMs !== pathInfo.ctimeMs ||
-      opened.size > maxBytes
-    ) {
-      fail(conflictCode, "Immutable evidence changed while it was opened.");
-    }
-    const bytes = await handle.readFile();
-    const after = await handle.stat();
-    const finalPath = await lstat(filePath).catch(() => null);
-    if (
-      bytes.byteLength > maxBytes ||
-      after.dev !== opened.dev ||
-      after.ino !== opened.ino ||
-      after.size !== opened.size ||
-      after.mtimeMs !== opened.mtimeMs ||
-      after.ctimeMs !== opened.ctimeMs ||
-      !finalPath ||
-      finalPath.isSymbolicLink() ||
-      finalPath.dev !== opened.dev ||
-      finalPath.ino !== opened.ino ||
-      finalPath.size !== opened.size ||
-      finalPath.mtimeMs !== opened.mtimeMs ||
-      finalPath.ctimeMs !== opened.ctimeMs
-    ) {
+    return (await readTrustedFileSnapshot(filePath, {
+      maxBytes,
+      optional: true,
+      requirePrivate: true,
+    }))?.bytes ?? null;
+  } catch (error) {
+    if (!error?.code?.startsWith("TRUSTED_FILE_")) throw error;
+    if (error.code === "TRUSTED_FILE_CHANGED") {
       fail(conflictCode, "Immutable evidence changed while it was read.");
     }
-    return bytes;
-  } catch (error) {
-    if (["ELOOP", "ENOENT", "ENOTDIR"].includes(error.code)) {
-      fail(conflictCode, "Immutable evidence changed while it was opened.");
-    }
-    throw error;
-  } finally {
-    await handle?.close();
+    fail(conflictCode, "Existing immutable evidence is invalid.");
   }
 }
 

@@ -8,6 +8,7 @@ import { parseArgs, required } from "./lib/args.mjs";
 import { CodexChatError } from "./lib/errors.mjs";
 import { preflight } from "./lib/preflight.mjs";
 import { packContext } from "./lib/pack.mjs";
+import { prepareCapsule } from "./lib/capsule-preparation.mjs";
 import { createTransportManifest } from "./lib/transport-plan.mjs";
 import { createContextManifest } from "./lib/context-manifest.mjs";
 import { createDeliveryReceipt } from "./lib/delivery-receipt.mjs";
@@ -39,6 +40,7 @@ const COMMANDS = [
   "transport-gate",
   "ego-bootstrap-lease",
   "pack",
+  "prepare-capsule",
   "transport-plan",
   "manifest",
   "delivery-receipt",
@@ -397,6 +399,22 @@ async function main() {
       stateDir: path.resolve(stateDir),
       ...result,
     });
+    return;
+  }
+  if (command === "prepare-capsule") {
+    emitSuccess(
+      command,
+      await prepareCapsule({
+        root: required(options, "root"),
+        includes: options.include,
+        taskEnvelopePath: required(options, "task-envelope"),
+        capsuleId: required(options, "capsule-id"),
+        transportKind: required(options, "transport-kind"),
+        uploadCapability: required(options, "upload-capability"),
+        outputRoot: required(options, "output-root"),
+        scanner: "gitleaks",
+      }),
+    );
     return;
   }
   if (command === "transport-plan") {

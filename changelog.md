@@ -8,6 +8,11 @@ that introduced each change; merge-only commits are omitted.
 
 ### Added
 
+- Atomic capsule preparation that snapshots source and task bytes once,
+  derives the transport manifest from those exact bytes, scans the complete
+  capsule, publishes content-addressed artifacts first, and commits a
+  create-once receipt last. Exact concurrent or post-crash replay converges;
+  divergent generations fail closed.
 - A deep immutable-evidence store shared by delivery receipts and terminal
   captures. It owns exact-input scanning, private directory identities,
   no-follow reads, per-slot locking, run-head guards, create-once artifact and

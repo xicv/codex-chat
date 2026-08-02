@@ -73,6 +73,10 @@ export const LIMITS_TRANSPORT_MANIFEST_V1 = Object.freeze({
   maxArtifactBytes: 128 * 1024,
 });
 
+export const LIMITS_CAPSULE_V1 = Object.freeze({
+  maxReceiptBytes: 32 * 1024,
+});
+
 export const LIMITS_DISTRIBUTED_V1 = Object.freeze({
   lease: Object.freeze({
     minTtlMs: 1_000,

@@ -299,7 +299,9 @@ After the browser transport gate passes, use the bundled helper at
 controls the browser or sends messages.
 
 For the portable v1 capsule, select explicit UTF-8/LF source files only. Do
-not pass whole directories.
+not pass whole directories. Persist the exact task envelope as a UTF-8/LF
+file, choose a unique capsule ID (normally the intended run ID), and use the
+single atomic preparation command after preflight:
 
 ```bash
 node <skill>/scripts/codex-chat.mjs preflight \
@@ -307,38 +309,48 @@ node <skill>/scripts/codex-chat.mjs preflight \
   --include path/to/file \
   --state-dir "$HOME/.codex/codex-chat/runs"
 
-node <skill>/scripts/codex-chat.mjs pack \
+node <skill>/scripts/codex-chat.mjs prepare-capsule \
   --root "$PWD" \
   --include path/to/file \
-  --output /private/tmp/codex-chat-context.json
-```
-
-The helper rejects secrets, sensitive filenames, symlinks, traversal, unsafe text, collisions, and oversized payloads. It scans the exact staged artifact with gitleaks from an isolated policy directory after removing parent `GITLEAKS_*` configuration and disabling payload-controlled allow comments and ignore files. Report the selected manifest, byte size, SHA-256, and VCS baseline before egress. Send only that exact artifact; rebuilding or broadening it requires a new digest and record.
-
-The output parent must already exist, must be a real directory outside the source root, and the output path must not already exist. The helper never replaces an existing context artifact or source file. The installed CLI always resolves and identity-checks `gitleaks`; it does not accept a scanner override or a scan bypass.
-
-Persist the exact task envelope as a UTF-8/LF file, then create a size-aware
-transport manifest before run creation:
-
-```bash
-node <skill>/scripts/codex-chat.mjs transport-plan \
-  --root "$PWD" \
-  --context /private/tmp/codex-chat-context.json \
-  --context-sha256 <context-sha256> \
   --task-envelope /private/tmp/codex-chat-task.txt \
-  --task-envelope-sha256 <task-envelope-sha256> \
+  --capsule-id <capsule-id> \
   --transport-kind <selected-transport> \
   --upload-capability <available|unavailable|unknown> \
-  --output /private/tmp/codex-chat-transport.json
+  --output-root /private/tmp/codex-chat-capsules
 ```
+
+The output-root parent must already exist; the helper creates or reuses a
+private store outside the source root. The command builds one source snapshot,
+reads one exact task snapshot, creates the size-aware transport manifest from
+those bytes, scans the complete set, publishes content-addressed artifacts,
+and writes the create-once capsule receipt last. Artifacts without that receipt
+are incomplete and must not be sent or bound to a run. An exact replay recovers
+an interrupted publication idempotently; a different snapshot under the same
+capsule ID fails closed. Concurrent coordinators therefore converge on one
+receipt or receive an explicit conflict instead of mixing generations.
+
+The helper rejects secrets, sensitive filenames, symlinks, traversal, unsafe
+text, collisions, and oversized payloads. It scans the exact staged capsule
+with gitleaks from an isolated policy directory after removing parent
+`GITLEAKS_*` configuration and disabling payload-controlled allow comments and
+ignore files. Report the selected files, byte sizes, capsule receipt SHA-256,
+context SHA-256, task-envelope SHA-256, transport-manifest SHA-256, and VCS
+baseline before egress. Send only the exact artifact selected by the returned
+transport manifest; rebuilding or broadening it requires a new capsule ID and
+record.
+
+The installed CLI always resolves and identity-checks `gitleaks`; it does not
+accept a scanner override or a scan bypass. The lower-level create-only `pack`
+and `transport-plan` commands remain available for protocol tooling and
+backwards compatibility, but do not use their separate outputs as a newly
+prepared capsule when `prepare-capsule` is available.
 
 Set upload capability to `available` only after the already-selected transport
 has exposed a supported upload control in a read-only capability observation.
-The helper re-reads, digest-checks, and secret-scans the exact context, task,
-and generated manifest. Small contexts become one exact inline composer
-envelope. Larger contexts select one attachment only when upload is available;
-otherwise the plan stops before run creation or browser mutation. Oversized
-task instructions always stop. Bind the returned manifest SHA-256 as
+Small contexts become one exact inline composer envelope. Larger contexts
+select one attachment only when upload is available; otherwise preparation
+returns a stop plan before run creation or browser mutation. Oversized task
+instructions always stop. Bind the returned manifest SHA-256 as
 `transportManifestSha256` in hardened `prepared` and `send_reserved` events.
 
 The manifest's `composer.text` is the only planned composer text. For an

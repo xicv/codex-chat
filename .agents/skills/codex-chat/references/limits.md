@@ -47,6 +47,7 @@ Size-aware transport manifest v1 uses these fixed limits:
 | Inline context | 24,576 bytes |
 | Inline composer envelope | 49,152 bytes |
 | Serialized transport manifest | 131,072 bytes |
+| Serialized atomic capsule receipt | 32,768 bytes |
 
 The manifest is a deterministic, scanned plan. It never grants upload, send,
 resend, provider acceptance, or model-visibility authority.

@@ -44,10 +44,10 @@ rate-limited, disconnected, or silently changed by its provider.
 flowchart LR
     U["User goal and authority"] --> C["Codex lead"]
     C --> B{"Zero-egress browser gate"}
-    B -->|"Built-in Browser ready"| P["Preflight and minimal context pack"]
+    B -->|"Built-in Browser ready"| P["Preflight and atomic capsule preparation"]
     B -->|"Primary unavailable; Ego ready"| P
     B -->|"No transport ready"| X["Stop before source work"]
-    P --> S["Secret scan and SHA-256 binding"]
+    P --> S["Commit-last receipt and SHA-256 binding"]
     S --> E["External collaborator"]
     E --> R["Bounded result envelope"]
     R --> Q["Quarantine and validation"]
@@ -125,6 +125,10 @@ use a session authenticated by the user.
     attachment before run creation. Small context is inlined; larger context
     requires an observed upload capability. The plan never authorizes action,
     resend, or a model-visibility claim.
+16. **Commit capsules atomically.** Context, task, and transport artifacts are
+    content-addressed and scanned before a create-once capsule receipt becomes
+    authoritative. Concurrent identical writers converge; divergent or
+    interrupted writers cannot expose a mixed capsule generation.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
@@ -302,11 +306,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 163/163 |
-| Contract tests | 35/35 |
+| Unit tests | 200/200 |
+| Contract tests | 38/38 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 3/3 |
-| Aggregate test gate | 206/206 |
+| Aggregate test gate | 246/246 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -331,10 +335,14 @@ node .agents/skills/codex-chat/scripts/codex-chat.mjs preflight \
   --root "$PWD" \
   --include src/example.mjs
 
-node .agents/skills/codex-chat/scripts/codex-chat.mjs pack \
+node .agents/skills/codex-chat/scripts/codex-chat.mjs prepare-capsule \
   --root "$PWD" \
   --include src/example.mjs \
-  --output /private/tmp/codex-chat-context.json
+  --task-envelope /private/tmp/codex-chat-task.txt \
+  --capsule-id <intended-run-id> \
+  --transport-kind browser \
+  --upload-capability unknown \
+  --output-root /private/tmp/codex-chat-capsules
 
 node .agents/skills/codex-chat/scripts/codex-chat.mjs manifest \
   --root "$PWD" \
@@ -369,9 +377,14 @@ node .agents/skills/codex-chat/scripts/codex-chat.mjs control \
   --request /private/tmp/coordination-request.json
 ```
 
-Context outputs must be new paths in existing real directories. Delivery
-receipts use create-only, content-addressed paths beneath the durable run state
-directory. Delivery receipts and terminal captures share one internal
+Atomic capsule preparation uses a private store outside the source root. Its
+content-addressed context, task-envelope, and transport-manifest artifacts are
+non-authoritative until the create-once capsule receipt is published last.
+Exact replay recovers partial publication; a divergent snapshot under the same
+capsule ID fails closed. The lower-level `pack` and `transport-plan` commands
+remain create-only compatibility primitives. Delivery receipts use
+create-only, content-addressed paths beneath the durable run state directory.
+Delivery receipts and terminal captures share one internal
 immutable-evidence store for exact-input scanning, private directory identity,
 per-slot and run-head serialization, partial-publication recovery, idempotent
 replay, and final tamper checks. The CLI never replaces an existing artifact.
@@ -382,6 +395,7 @@ replay, and final tamper checks. The CLI never replaces an existing artifact.
 | `transport-attempt` | Own the durable Browser-to-Ego readiness state machine, write-ahead side effects, exact crash replay, immutable route binding, private capabilities, and resumable status |
 | `transport-gate` | Serialize primary-browser health probes, remember a closed host generation, neutrally release an unused claim, and allow one bounded half-open probe after a host restart or cooldown |
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
+| `prepare-capsule` | Atomically prepare, scan, content-address, and commit one context/task/transport capsule with idempotent crash recovery |
 | `transport-plan` | Create and scan a digest-bound size-aware composer/attachment plan without authorizing browser action |
 | `manifest` | Create and scan a typed `COLLAB_CONTEXT_MANIFEST_V2` provenance sidecar |
 | `delivery-receipt` | Create and scan immutable, digest-bound transport evidence without claiming model visibility |

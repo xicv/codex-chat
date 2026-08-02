@@ -27,39 +27,36 @@ test("local CLI E2E completes an at-most-once external collaboration flow", asyn
     "test.mjs",
     "const { answer } = await import('./src/answer.mjs'); if (answer !== 42) process.exit(1);\n",
   );
-  const artifactPath = path.join(await tempDir(), "context.json");
-
-  const packed = await runCli([
-    "pack", "--root", root, "--state-dir", stateDir,
-    "--include", "src/answer.mjs", "--output", artifactPath,
-  ]);
-  assert.equal(packed.code, 0, packed.stderr);
-  const contextSha256 = packed.json.data.sha256;
   const taskEnvelope = "synthetic outbound task\n";
-  const taskEnvelopeSha256 = sha256(taskEnvelope);
   const taskEnvelopePath = await writeFixture(
     await tempDir(),
     "task-envelope.txt",
     taskEnvelope,
   );
-  const transportManifestPath = path.join(
-    await tempDir(),
-    "transport-manifest.json",
-  );
-  const transportPlan = await runCli([
-    "transport-plan",
+  const capsuleRoot = path.join(await tempDir(), "capsules");
+  const preparedCapsule = await runCli([
+    "prepare-capsule",
     "--root", root,
-    "--context", artifactPath,
-    "--context-sha256", contextSha256,
+    "--include", "src/answer.mjs",
     "--task-envelope", taskEnvelopePath,
-    "--task-envelope-sha256", taskEnvelopeSha256,
+    "--capsule-id", runId,
     "--transport-kind", "synthetic-transport",
     "--upload-capability", "unknown",
-    "--output", transportManifestPath,
+    "--output-root", capsuleRoot,
   ]);
-  assert.equal(transportPlan.code, 0, JSON.stringify(transportPlan.json));
-  assert.equal(transportPlan.json.data.strategy, "inline-context");
-  const transportManifestSha256 = transportPlan.json.data.sha256;
+  assert.equal(
+    preparedCapsule.code,
+    0,
+    JSON.stringify(preparedCapsule.json),
+  );
+  assert.equal(
+    preparedCapsule.json.data.transportManifest.strategy,
+    "inline-context",
+  );
+  const contextSha256 = preparedCapsule.json.data.context.sha256;
+  const taskEnvelopeSha256 = preparedCapsule.json.data.taskEnvelope.sha256;
+  const transportManifestSha256 =
+    preparedCapsule.json.data.transportManifest.sha256;
 
   async function record(event, sequence, expectedState, data = {}) {
     const dataPath = path.join(stateDir, `${sequence}-${event}.json`);

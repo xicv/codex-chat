@@ -11,6 +11,10 @@
 - A transport manifest re-scans and digest-binds the portable context and exact
   task envelope, then chooses a bounded inline or capability-gated attachment
   strategy. It never authorizes a browser action or resend.
+- Atomic capsule preparation snapshots the portable context and task once,
+  derives the transport manifest from those exact bytes, scans all artifacts
+  and the capsule receipt together, publishes content-addressed objects first,
+  and makes the create-once receipt authoritative last.
 - A v2 delivery receipt records digest-bound transport observations only. It
   does not upload, send, prove backend model visibility, or authorize resend.
 - A hardened terminal capture receipt stores and binds the full response and
@@ -44,7 +48,11 @@ clean/rejected classification, artifact bytes, and SHA-256.
 
 Context outputs are create-only. Their existing real parents and targets are
 identity-checked, and the targets must be absent. Never replace an existing
-evidence artifact or write a portable context inside the repository. Delivery
+evidence artifact or write a portable context inside the repository. The
+preferred capsule command writes outside the source root into a private
+immutable store. Identical concurrent writers converge on one exact receipt;
+divergent writers conflict, and partial objects left by a crash are
+non-authoritative until exact replay commits the matching receipt. Delivery
 receipts are created only beneath the durable run state directory. The helper
 no-follow reads and identity-checks the manifest, plan, and raw evidence, scans
 all three plus the generated receipt, then compares the exact run stream head

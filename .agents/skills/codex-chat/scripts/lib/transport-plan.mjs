@@ -314,7 +314,7 @@ export function buildTransportManifest(input) {
   };
 }
 
-async function readRealFile(filePath, label, maxBytes) {
+export async function readBoundedTransportFile(filePath, label, maxBytes) {
   const absolute = path.resolve(filePath);
   const before = await lstat(absolute).catch(() => null);
   if (
@@ -381,8 +381,8 @@ export async function createTransportManifest({
   const canonicalRoot = await realpath(absoluteRoot);
   const outputInfo = await inspectOutput(absoluteRoot, canonicalRoot, output);
   const [contextBytes, taskEnvelopeBytes] = await Promise.all([
-    readRealFile(contextPath, "TRANSPORT_CONTEXT", MAX_CONTEXT_BYTES),
-    readRealFile(
+    readBoundedTransportFile(contextPath, "TRANSPORT_CONTEXT", MAX_CONTEXT_BYTES),
+    readBoundedTransportFile(
       taskEnvelopePath,
       "TRANSPORT_TASK_ENVELOPE",
       MAX_TASK_ENVELOPE_INPUT_BYTES,

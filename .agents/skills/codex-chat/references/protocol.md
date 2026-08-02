@@ -185,10 +185,20 @@ namespace, and the optional typed transport-manifest digest. The legacy
 is not described as the full outbound prompt. A correction turn may use a new
 task-envelope digest while retaining the immutable context binding.
 
-Before creating a new hardened run, `transport-plan` re-reads and
-digest-checks the portable context and exact task envelope, scans both with the
-generated `CODEX_CHAT_TRANSPORT_MANIFEST_V1`, and chooses one deterministic
-strategy. A context no larger than 24,576 bytes is embedded in one canonical
+Before creating a new hardened run, `prepare-capsule` snapshots the explicitly
+selected portable source and exact task envelope, derives the
+`CODEX_CHAT_TRANSPORT_MANIFEST_V1` from those bytes, and scans the context,
+task, manifest, and `CODEX_CHAT_CAPSULE_V1` receipt together. It publishes
+content-addressed artifacts first and the create-once capsule receipt last in
+one private store outside the source root. An incomplete artifact set has no
+authority. Exact replay completes a partial publication; concurrent divergent
+writers for one capsule ID fail closed. Local coordinators must share one
+canonical capsule store, just as they share one canonical run-state directory.
+The lower-level `pack` and `transport-plan` commands remain compatibility
+primitives, not the default new-capsule workflow.
+
+The manifest chooses one deterministic strategy. A context no larger than
+24,576 bytes is embedded in one canonical
 composer envelope only when the complete envelope remains within 49,152
 bytes. Its task/context boundaries carry an identifier derived from both exact
 input digests, so matching words inside source files cannot impersonate the
@@ -197,15 +207,22 @@ is bound as attachment ordinal zero. Unknown or unavailable upload stops, as
 does a composer task envelope over 32,768 bytes. The fixed thresholds are
 project protocol limits, not provider capacity claims.
 
-The manifest binds the selected transport, both input digests and byte counts,
-the exact composer text/digest, optional attachment digest/ordinal, and the
-decision thresholds. `prepared` and the first `send_reserved` bind its digest
-as `transportManifestSha256`. The plan is deterministic and create-only but
-always reports `actionAuthorized: false`, `resendAuthorized: false`, and
-`modelVisible: "unknown"`. Only a later durable reservation and the bound
-transport adapter may perform the selected action once. Changed plan bytes,
-capability, strategy, composer text, context artifact, or attachment ordinal
-stop instead of triggering an improvised fallback.
+The capsule receipt binds the context, task, and transport-manifest object
+paths, digests, byte counts, chosen strategy, reservation eligibility, and
+composer digest. It retains `modelVisible: "unknown"`,
+`actionAuthorized: false`, and `resendAuthorized: false`. Its SHA-256 is local
+preparation evidence; it does not replace the three outbound digests bound by
+the run ledger.
+
+The transport manifest binds the selected transport, both input digests and
+byte counts, the exact composer text/digest, optional attachment
+digest/ordinal, and the decision thresholds. `prepared` and the first
+`send_reserved` bind its digest as `transportManifestSha256`. The plan is
+deterministic and create-only but always reports `actionAuthorized: false`,
+`resendAuthorized: false`, and `modelVisible: "unknown"`. Only a later durable
+reservation and the bound transport adapter may perform the selected action
+once. Changed plan bytes, capability, strategy, composer text, context artifact,
+or attachment ordinal stop instead of triggering an improvised fallback.
 
 Coordinated runs add immutable `workspaceId`, `coordinatorId`, `workUnitId`,
 and `agentId` routing. A hardened reservation takes a state-directory-wide

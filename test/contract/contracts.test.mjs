@@ -11,6 +11,7 @@ import {
 import { runCli, tempDir, writeFixture } from "../helpers.mjs";
 import {
   LIMITS_EGO_BOOTSTRAP_V1,
+  LIMITS_CAPSULE_V1,
   LIMITS_DISTRIBUTED_V1,
   LIMITS_TRANSPORT_MANIFEST_V1,
   LIMITS_V1,
@@ -120,6 +121,25 @@ test("skill proves browser and provider readiness before preparing outbound sour
     gate,
     /If any action might have uploaded or submitted content[\s\S]*never\s+start the Ego fallback/,
   );
+});
+
+test("skill commits one atomic capsule generation before run creation", async () => {
+  const instructions = await readFile(
+    path.resolve(".agents/skills/codex-chat/SKILL.md"),
+    "utf8",
+  );
+  const preparationStart = instructions.indexOf("## Prepare deterministic context");
+  const runStart = instructions.indexOf("Create the run with the context artifact");
+  assert.notEqual(preparationStart, -1);
+  assert.notEqual(runStart, -1);
+  assert.ok(preparationStart < runStart);
+  const preparation = instructions.slice(preparationStart, runStart);
+  assert.match(preparation, /prepare-capsule/);
+  assert.match(preparation, /writes the create-once capsule receipt last/);
+  assert.match(preparation, /Artifacts without that receipt\s+are incomplete/);
+  assert.match(preparation, /Concurrent coordinators therefore converge/);
+  assert.match(preparation, /different snapshot under the same\s+capsule ID fails closed/);
+  assert.match(preparation, /do not use their separate outputs as a newly\s+prepared capsule/);
 });
 
 test("a bounded external-response wait degrades independence without changing delivery state", async () => {
@@ -439,6 +459,11 @@ test("normative JSON schemas are valid and expose the v1 required fields", async
       "taskEnvelope", "composer", "attachment", "thresholds",
       "modelVisible", "actionAuthorized", "resendAuthorized",
     ],
+    "capsule-v1.schema.json": [
+      "kind", "protocolVersion", "capsuleId", "context", "taskEnvelope",
+      "transportManifest", "modelVisible", "actionAuthorized",
+      "resendAuthorized",
+    ],
     "collab-result-v1.schema.json": [
       "kind", "protocolVersion", "runId", "turnId", "contextSha256",
       "complete", "artifactKind", "summary", "claims",
@@ -527,6 +552,9 @@ test("versioned implementation limits agree with normative schemas", async () =>
       "utf8",
     ),
   );
+  const capsuleSchema = JSON.parse(
+    await readFile(path.join(schemaDir, "capsule-v1.schema.json"), "utf8"),
+  );
   const deliveryPlanSchema = JSON.parse(
     await readFile(
       path.join(schemaDir, "delivery-receipt-plan-v2.schema.json"),
@@ -549,6 +577,14 @@ test("versioned implementation limits agree with normative schemas", async () =>
   assert.equal(
     transportManifestSchema.properties.context.properties.bytes.maximum,
     LIMITS_TRANSPORT_MANIFEST_V1.maxContextBytes,
+  );
+  assert.equal(
+    capsuleSchema.properties.context.properties.bytes.maximum,
+    LIMITS_TRANSPORT_MANIFEST_V1.maxContextBytes,
+  );
+  assert.equal(
+    LIMITS_CAPSULE_V1.maxReceiptBytes,
+    32 * 1024,
   );
   assert.equal(
     transportManifestSchema.properties.taskEnvelope.properties.bytes.maximum,
@@ -610,6 +646,10 @@ test("versioned implementation limits agree with normative schemas", async () =>
   assert.match(limitsReference, /Minimum lease TTL \| 60,000 ms/);
   assert.match(limitsReference, /Default lease TTL \| 900,000 ms/);
   assert.match(limitsReference, /Maximum lease TTL \| 3,600,000 ms/);
+  assert.match(
+    limitsReference,
+    /Serialized atomic capsule receipt \| 32,768 bytes/,
+  );
   const distributedRequestSchema = JSON.parse(
     await readFile(
       path.join(
@@ -712,6 +752,7 @@ test("CLI exposes machine-readable help and version without repository context",
       "transport-gate",
       "ego-bootstrap-lease",
       "pack",
+      "prepare-capsule",
       "transport-plan",
       "manifest",
       "delivery-receipt",

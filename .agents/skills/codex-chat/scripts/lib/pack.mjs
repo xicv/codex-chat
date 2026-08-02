@@ -211,25 +211,29 @@ export async function atomicWrite(target, contents, expectedParent) {
   }
 }
 
-export async function packContext({
-  root,
-  includes,
-  output,
-  scanner = "gitleaks",
-  testMode = false,
-  maxFileBytes = DEFAULT_MAX_FILE_BYTES,
-  maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
-  maxFiles = DEFAULT_MAX_FILES,
-  maxArtifactBytes = LIMITS_V1.pack.maxArtifactBytes,
-  testHooks = null,
-}) {
+async function resolveSourceRoot(root) {
   const absoluteRoot = path.resolve(root);
   const rootInfo = await lstat(absoluteRoot).catch(() => null);
   if (!rootInfo?.isDirectory() || rootInfo.isSymbolicLink()) {
     fail("ROOT_INVALID", `Root must be a real directory: ${absoluteRoot}`);
   }
-  const canonicalRoot = await realpath(absoluteRoot);
-  const outputInfo = await inspectOutput(absoluteRoot, canonicalRoot, output);
+  return {
+    absoluteRoot,
+    canonicalRoot: await realpath(absoluteRoot),
+  };
+}
+
+async function buildPackedContextArtifact({
+  source,
+  includes,
+  testMode,
+  maxFileBytes,
+  maxTotalBytes,
+  maxFiles,
+  maxArtifactBytes,
+  testHooks,
+}) {
+  const { absoluteRoot, canonicalRoot } = source;
   const normalized = await validateIncludes(canonicalRoot, includes, { filesOnly: true });
   const selected = new Set();
   for (const relativePath of normalized) {
@@ -276,33 +280,95 @@ export async function packContext({
     rootLabel: path.basename(absoluteRoot),
     files,
   };
-  const serialized = `${JSON.stringify(artifact)}\n`;
-  if (Buffer.byteLength(serialized) > maxArtifactBytes) {
+  const bytes = Buffer.from(`${JSON.stringify(artifact)}\n`);
+  if (bytes.byteLength > maxArtifactBytes) {
     fail("ARTIFACT_TOO_LARGE", `Serialized artifact exceeds ${maxArtifactBytes} bytes.`);
   }
+  return {
+    absoluteRoot,
+    canonicalRoot,
+    bytes,
+    size: bytes.byteLength,
+    sha256: sha256(bytes),
+    sourceBytes,
+    files: files.map(({ path: filePath, bytes: fileBytes, sha256: digest }) => ({
+      path: filePath,
+      bytes: fileBytes,
+      sha256: digest,
+    })),
+  };
+}
+
+export async function buildPackedContext({
+  root,
+  includes,
+  testMode = false,
+  maxFileBytes = DEFAULT_MAX_FILE_BYTES,
+  maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
+  maxFiles = DEFAULT_MAX_FILES,
+  maxArtifactBytes = LIMITS_V1.pack.maxArtifactBytes,
+  testHooks = null,
+}) {
+  const source = await resolveSourceRoot(root);
+  return buildPackedContextArtifact({
+    source,
+    includes,
+    testMode,
+    maxFileBytes,
+    maxTotalBytes,
+    maxFiles,
+    maxArtifactBytes,
+    testHooks,
+  });
+}
+
+export async function packContext({
+  root,
+  includes,
+  output,
+  scanner = "gitleaks",
+  testMode = false,
+  maxFileBytes = DEFAULT_MAX_FILE_BYTES,
+  maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
+  maxFiles = DEFAULT_MAX_FILES,
+  maxArtifactBytes = LIMITS_V1.pack.maxArtifactBytes,
+  testHooks = null,
+}) {
+  const source = await resolveSourceRoot(root);
+  const outputInfo = await inspectOutput(
+    source.absoluteRoot,
+    source.canonicalRoot,
+    output,
+  );
+  const packed = await buildPackedContextArtifact({
+    source,
+    includes,
+    testMode,
+    maxFileBytes,
+    maxTotalBytes,
+    maxFiles,
+    maxArtifactBytes,
+    testHooks,
+  });
   const artifactPath = outputInfo.target;
 
   const staging = await mkdtemp(path.join(os.tmpdir(), "codex-chat-scan-"));
   try {
-    await writeFile(path.join(staging, "context.json"), serialized, {
+    await writeFile(path.join(staging, "context.json"), packed.bytes, {
       mode: 0o600,
     });
     var scan = await scanDirectory(staging, scanner, { testMode });
-    await atomicWrite(artifactPath, serialized, outputInfo);
+    await atomicWrite(artifactPath, packed.bytes, outputInfo);
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
 
   return {
     artifactPath,
-    size: Buffer.byteLength(serialized),
-    sha256: sha256(serialized),
-    sourceBytes,
-    files: files.map(({ path: filePath, bytes, sha256: digest }) => ({
-      path: filePath,
-      bytes,
-      sha256: digest,
-    })),
+    size: packed.size,
+    sha256: packed.sha256,
+    sourceBytes: packed.sourceBytes,
+    files: packed.files,
     scanner: scan,
   };
 }

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex-chat.invalid/schemas/capsule-v1.schema.json",
+  "title": "CODEX_CHAT_CAPSULE_V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "protocolVersion",
+    "capsuleId",
+    "context",
+    "taskEnvelope",
+    "transportManifest",
+    "modelVisible",
+    "actionAuthorized",
+    "resendAuthorized"
+  ],
+  "properties": {
+    "kind": { "const": "CODEX_CHAT_CAPSULE_V1" },
+    "protocolVersion": { "const": 1 },
+    "capsuleId": { "$ref": "#/$defs/id" },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "artifact", "bytes", "sha256"],
+      "properties": {
+        "kind": { "const": "COLLAB_CONTEXT_V1" },
+        "artifact": {
+          "type": "string",
+          "pattern": "^artifacts/context-[a-f0-9]{64}\\.json$"
+        },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 786432 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "taskEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "bytes", "sha256"],
+      "properties": {
+        "artifact": {
+          "type": "string",
+          "pattern": "^artifacts/task-envelope-[a-f0-9]{64}\\.txt$"
+        },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 65536 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "transportManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "artifact",
+        "bytes",
+        "sha256",
+        "strategy",
+        "reservationEligible",
+        "composerSha256"
+      ],
+      "properties": {
+        "kind": { "const": "CODEX_CHAT_TRANSPORT_MANIFEST_V1" },
+        "artifact": {
+          "type": "string",
+          "pattern": "^artifacts/transport-manifest-[a-f0-9]{64}\\.json$"
+        },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 131072 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "strategy": {
+          "enum": ["inline-context", "attachment-context", "stop"]
+        },
+        "reservationEligible": { "type": "boolean" },
+        "composerSha256": { "$ref": "#/$defs/nullableSha256" }
+      }
+    },
+    "modelVisible": { "const": "unknown" },
+    "actionAuthorized": { "const": false },
+    "resendAuthorized": { "const": false }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "nullableSha256": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+    }
+  }
+}

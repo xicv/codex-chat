@@ -8,6 +8,11 @@ that introduced each change; merge-only commits are omitted.
 
 ### Added
 
+- A route-bound `collaboration-outcome` command that reads durable transport
+  and optional run state, emits controlled egress/submission/response
+  classifications, and supplies canonical report text that keeps local browser,
+  Playwright, repository, and staging evidence independent from external
+  collaborator claims.
 - A validated declarative CLI command registry that owns each operational
   command's handler, required and optional options, repeatable options,
   dispatch, and machine-readable help. Undeclared options now fail before
@@ -83,6 +88,12 @@ that introduced each change; merge-only commits are omitted.
 
 ### Fixed
 
+- Transport exhaustion before provider readiness now persists a terminal
+  attempt for missing adapters, unavailable primary tooling, active same-host
+  cooldown without Ego, repeated `Transport closed` without Ego, and a
+  contender blocked by another coordinator's active Browser probe or Ego
+  bootstrap lease. Status no longer leaves those branches looking pending,
+  and failure results retain their exact retry time across replay.
 - Transport-attempt side effects are now crash-resumable across the gap between
   Browser/Ego state mutation and the attempt checkpoint. Write-ahead pending
   effects bind the original request digest, exact resolution receipts make

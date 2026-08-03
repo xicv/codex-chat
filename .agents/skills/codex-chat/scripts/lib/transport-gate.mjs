@@ -400,7 +400,11 @@ function replayedResolutionResult(current, receipt) {
           hostGenerationId: receipt.hostGenerationId,
         },
     previousFailure: generationStillCurrent ? current.lastFailure : null,
-    retryAfter: null,
+    retryAfter: receipt.action === "failure"
+      ? new Date(
+          Date.parse(receipt.observedAt) + REPROBE_COOLDOWN_MS,
+        ).toISOString()
+      : null,
   };
 }
 
@@ -687,7 +691,9 @@ export async function transportGate({
       claimToken: null,
       generation,
       previousFailure: next.lastFailure,
-      retryAfter: null,
+      retryAfter: action === "failure"
+        ? new Date(now.getTime() + REPROBE_COOLDOWN_MS).toISOString()
+        : null,
     };
   });
 }

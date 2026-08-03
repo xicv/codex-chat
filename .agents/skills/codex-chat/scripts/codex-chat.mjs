@@ -33,6 +33,9 @@ import {
 } from "./lib/terminal-capture.mjs";
 import { transportGate } from "./lib/transport-gate.mjs";
 import { advanceTransportAttempt } from "./lib/transport-attempt.mjs";
+import {
+  buildCollaborationOutcome,
+} from "./lib/collaboration-outcome.mjs";
 import { egoBootstrapLease } from "./lib/ego-bootstrap-lease.mjs";
 import { runVerification } from "./lib/verify.mjs";
 
@@ -58,6 +61,16 @@ const COMMAND_CONTRACTS = [
     ],
     repeatable: [],
     execute: executeTransportAttempt,
+  },
+  {
+    name: "collaboration-outcome",
+    required: [
+      "workspace-id", "coordinator-id", "work-unit-id", "agent-id",
+      "attempt-id",
+    ],
+    optional: ["transport-state-dir", "state-dir", "run-id"],
+    repeatable: [],
+    execute: executeCollaborationOutcome,
   },
   {
     name: "transport-gate",
@@ -451,6 +464,33 @@ async function executeTransportAttempt({ command, options, context }) {
         : {}),
       ...(observation === null ? {} : { observation }),
     }),
+  );
+}
+
+async function executeCollaborationOutcome({ command, options, context }) {
+  const owner = {
+    workspaceId: required(options, "workspace-id"),
+    coordinatorId: required(options, "coordinator-id"),
+    workUnitId: required(options, "work-unit-id"),
+    agentId: required(options, "agent-id"),
+    attemptId: required(options, "attempt-id"),
+  };
+  const [attempt, run] = await Promise.all([
+    advanceTransportAttempt({
+      action: "status",
+      transportStateDir: context.transportStateDir,
+      owner,
+    }),
+    options["run-id"]
+      ? loadRun({
+          stateDir: context.stateDir,
+          runId: options["run-id"],
+        })
+      : null,
+  ]);
+  emitSuccess(
+    command,
+    buildCollaborationOutcome({ owner, attempt, run }),
   );
 }
 

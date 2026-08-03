@@ -54,7 +54,9 @@ generation permit crash recovery, while the exact lease ID and capability stop
 a stale owner from renewing or releasing its replacement.
 
 An unexpired lease owned by another coordinator stops the fallback before any
-task-space or source action. The owner renews the lease through readiness and
+task-space or source action. The competing attempt durably records
+`ego_bootstrap_in_progress` with the lease expiry as `retryAfter`; it does not
+remain pending or retry automatically. The owner renews the lease through readiness and
 source preparation. It releases only after `send_reserved` has durably
 acquired the ordinary logical-conversation lease, or after a stopped attempt
 has no Ego operation in flight. Thus the handoff overlaps ownership instead of
@@ -110,13 +112,37 @@ contend on the same provider-conversation leases.
 A healthy primary with a logged-out, challenged, rate-limited, or otherwise
 unready provider page does not authorize Ego fallback. User-owned
 authentication or a provider-readiness blocker stops before source preparation
-and is reported with no capsule prepared or transmitted and no external
-collaborator claims.
+and is reported through the canonical route-bound outcome. Before a run,
+`capsulePreparation=denied`, `sourceEgress=not_authorized`,
+`externalTurn=not_started`, and `externalClaims=none` describe protocol
+authority without inventing a browser-network observation.
 
 Once an upload or send action might have run, this pre-run classification no
 longer applies. No transport switch is allowed. A closed or failed transport
 enters normal marker reconciliation: unknown delivery becomes
 `send_ambiguous`, and no resend is authorized.
+
+## Canonical collaboration outcome
+
+`collaboration-outcome` reads the durable `transport-attempt` result and,
+after run creation, the exact route-bound run head. It changes neither. The
+workspace, coordinator, work-unit, and outbound agent identities must agree;
+a crossed coordinator route fails closed rather than combining evidence from
+two collaborations.
+
+The result keeps five state dimensions separate: capsule preparation, source
+egress authority, external-turn delivery, external-claim availability, and
+local evidence class. A pre-egress stop reports denied authority, not a claim
+that browser-network traffic was observed. `send_reserved` reports
+`send_reconciliation_required`, never non-delivery. An unconfirmed
+`response_pending_unknown` reports `delivery_ambiguous`; a confirmed one
+reports `submitted_response_pending`. Terminal response, review, validation,
+revision, and acceptance remain distinct classifications.
+
+The generated `statement` is the required user-facing collaboration report.
+Local Browser, Playwright, repository, document, or staging checks may be
+reported separately as independent Codex evidence. They are not alternate
+external-collaborator transports and never supply external collaborator claims.
 
 ## Durable event ledger
 

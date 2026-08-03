@@ -162,6 +162,61 @@ test("a second closed observation records the failure and hands off once to Ego"
   assert.equal(JSON.stringify(result).includes("private-ego-bootstrap-token"), false);
 });
 
+test("a second closed primary observation durably stops when Ego is unavailable", async () => {
+  const transportStateDir = await tempDir("codex-chat-attempt-exhausted-");
+  const owner = { ...OWNER, attemptId: "attempt-exhausted" };
+  const dependencies = {
+    processTable: async () => PROCESS_TABLE,
+    clock: () => new Date("2026-08-02T10:02:30.000Z"),
+    createToken: () => "private-primary-exhausted-claim",
+  };
+  await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner,
+    availability: { primary: true, ego: false },
+    dependencies,
+  });
+  await advanceTransportAttempt({
+    action: "observe_primary",
+    transportStateDir,
+    owner,
+    observation: { outcome: "transport_closed", probeNumber: 1 },
+    dependencies,
+  });
+
+  const stopped = await advanceTransportAttempt({
+    action: "observe_primary",
+    transportStateDir,
+    owner,
+    observation: { outcome: "transport_closed", probeNumber: 2 },
+    dependencies,
+  });
+
+  assert.deepEqual(stopped, {
+    schema: "codex-chat/transport-attempt-result/v1",
+    attemptId: "attempt-exhausted",
+    sequence: 3,
+    phase: "stopped",
+    decision: "stop",
+    adapter: "browser",
+    reason: "primary_transport_closed_ego_unavailable",
+    retryAfter: "2026-08-02T10:07:30.000Z",
+    restartVerified: null,
+    targetId: null,
+    preservedDraftTargetId: null,
+    nextAction: "report_exact_outcome_and_stop",
+  });
+  assert.deepEqual(
+    await advanceTransportAttempt({
+      action: "status",
+      transportStateDir,
+      owner,
+    }),
+    stopped,
+  );
+});
+
 test("the attempt preserves an inherited Ego draft and requests one fresh target", async () => {
   const transportStateDir = await tempDir("codex-chat-attempt-draft-");
   const dependencies = {
@@ -458,6 +513,137 @@ test("an unavailable primary adapter hands off directly to one Ego bootstrap", a
   assert.equal(JSON.stringify(result).includes("private-ego-direct-token"), false);
 });
 
+test("an active Ego bootstrap owner durably stops a competing attempt", async () => {
+  const transportStateDir = await tempDir("codex-chat-attempt-ego-busy-");
+  const dependencies = {
+    clock: () => new Date("2026-08-02T10:07:15.000Z"),
+  };
+  await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner: { ...OWNER, attemptId: "attempt-ego-owner" },
+    availability: { primary: false, ego: true },
+    dependencies: {
+      ...dependencies,
+      createEgoToken: () => "private-ego-owner-token",
+      createEgoLeaseId: () => "ego-owner-lease",
+    },
+  });
+  const contenderOwner = {
+    ...OWNER,
+    coordinatorId: "coordinator-b",
+    attemptId: "attempt-ego-contender",
+  };
+
+  const stopped = await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner: contenderOwner,
+    availability: { primary: false, ego: true },
+    dependencies: {
+      ...dependencies,
+      createEgoToken: () => "private-ego-contender-token",
+      createEgoLeaseId: () => "ego-contender-lease",
+    },
+  });
+
+  assert.deepEqual(stopped, {
+    schema: "codex-chat/transport-attempt-result/v1",
+    attemptId: "attempt-ego-contender",
+    sequence: 2,
+    phase: "stopped",
+    decision: "stop",
+    adapter: "ego",
+    reason: "ego_bootstrap_in_progress",
+    taskSpaceId: null,
+    retryAfter: "2026-08-02T10:22:15.000Z",
+    restartVerified: null,
+    targetId: null,
+    preservedDraftTargetId: null,
+    nextAction: "report_exact_outcome_and_stop",
+  });
+  assert.deepEqual(
+    await advanceTransportAttempt({
+      action: "status",
+      transportStateDir,
+      owner: contenderOwner,
+    }),
+    stopped,
+  );
+});
+
+test("an attempt with neither adapter records a durable pre-egress stop", async () => {
+  const transportStateDir = await tempDir("codex-chat-attempt-no-adapters-");
+  const owner = { ...OWNER, attemptId: "attempt-no-adapters" };
+
+  const stopped = await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner,
+    availability: { primary: false, ego: false },
+  });
+
+  assert.deepEqual(stopped, {
+    schema: "codex-chat/transport-attempt-result/v1",
+    attemptId: "attempt-no-adapters",
+    sequence: 1,
+    phase: "stopped",
+    decision: "stop",
+    adapter: null,
+    reason: "primary_and_ego_unavailable",
+    retryAfter: null,
+    restartVerified: null,
+    targetId: null,
+    preservedDraftTargetId: null,
+    nextAction: "report_exact_outcome_and_stop",
+  });
+  assert.deepEqual(
+    await advanceTransportAttempt({
+      action: "status",
+      transportStateDir,
+      owner,
+    }),
+    stopped,
+  );
+});
+
+test("an unavailable primary observation stops durably without Ego", async () => {
+  const transportStateDir = await tempDir("codex-chat-attempt-tool-exhausted-");
+  const owner = { ...OWNER, attemptId: "attempt-tool-exhausted" };
+  const dependencies = {
+    processTable: async () => PROCESS_TABLE,
+    clock: () => new Date("2026-08-02T10:07:30.000Z"),
+    createToken: () => "private-primary-tool-exhausted-claim",
+  };
+  await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner,
+    availability: { primary: true, ego: false },
+    dependencies,
+  });
+
+  const stopped = await advanceTransportAttempt({
+    action: "observe_primary",
+    transportStateDir,
+    owner,
+    observation: { outcome: "unavailable", probeNumber: 1 },
+    dependencies,
+  });
+
+  assert.equal(stopped.phase, "stopped");
+  assert.equal(stopped.reason, "primary_unavailable_ego_unavailable");
+  assert.equal(stopped.nextAction, "report_exact_outcome_and_stop");
+  assert.deepEqual(
+    await advanceTransportAttempt({
+      action: "status",
+      transportStateDir,
+      owner,
+    }),
+    stopped,
+  );
+});
+
 test("an unsafe fresh Ego target releases the lease and stops without touching the draft", async () => {
   const transportStateDir = await tempDir("codex-chat-attempt-stop-");
   const dependencies = {
@@ -604,7 +790,48 @@ test("an open same-host breaker selects Ego without probing Browser again", asyn
   assert.equal(result.sequence, 1);
 });
 
-test("a primary probe owned by another coordinator never starts Ego", async () => {
+test("an open same-host breaker records its exact retry when Ego is unavailable", async () => {
+  const transportStateDir = await tempDir("codex-chat-attempt-cooldown-stop-");
+  const generationProvider = () => inspectDesktopGeneration({
+    processTable: async () => PROCESS_TABLE,
+  });
+  const claimed = await transportGate({
+    action: "claim",
+    transportStateDir,
+    generationProvider,
+    clock: () => new Date("2026-08-02T10:10:00.000Z"),
+    createToken: () => "prior-transport-stop-claim",
+  });
+  await transportGate({
+    action: "failure",
+    claimToken: claimed.claimToken,
+    transportStateDir,
+    generationProvider,
+    clock: () => new Date("2026-08-02T10:10:01.000Z"),
+  });
+
+  const stopped = await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner: { ...OWNER, attemptId: "attempt-cooldown-stop" },
+    availability: { primary: true, ego: false },
+    dependencies: {
+      processTable: async () => PROCESS_TABLE,
+      clock: () => new Date("2026-08-02T10:10:02.000Z"),
+      createToken: () => "unused-cooldown-stop-token",
+    },
+  });
+
+  assert.equal(stopped.phase, "stopped");
+  assert.equal(
+    stopped.reason,
+    "primary_same_host_cooldown_active_ego_unavailable",
+  );
+  assert.equal(stopped.retryAfter, "2026-08-02T10:15:01.000Z");
+  assert.equal(stopped.restartVerified, false);
+});
+
+test("a primary probe owned by another coordinator durably stops the contender", async () => {
   const transportStateDir = await tempDir("codex-chat-attempt-primary-busy-");
   const dependencies = {
     processTable: async () => PROCESS_TABLE,
@@ -621,20 +848,34 @@ test("a primary probe owned by another coordinator never starts Ego", async () =
     },
   });
 
-  await assert.rejects(
-    advanceTransportAttempt({
-      action: "start",
+  const contenderOwner = {
+    ...OWNER,
+    attemptId: "attempt-primary-contender",
+  };
+  const stopped = await advanceTransportAttempt({
+    action: "start",
+    transportStateDir,
+    owner: contenderOwner,
+    availability: { primary: true, ego: true },
+    dependencies: {
+      ...dependencies,
+      createToken: () => "unused-contender-token",
+      createEgoToken: () => "must-not-acquire-ego",
+      createEgoLeaseId: () => "must-not-create-ego-lease",
+    },
+  });
+
+  assert.equal(stopped.phase, "stopped");
+  assert.equal(stopped.reason, "primary_probe_in_progress");
+  assert.equal(stopped.retryAfter, "2026-08-02T10:12:30.000Z");
+  assert.equal(stopped.nextAction, "report_exact_outcome_and_stop");
+  assert.deepEqual(
+    await advanceTransportAttempt({
+      action: "status",
       transportStateDir,
-      owner: { ...OWNER, attemptId: "attempt-primary-contender" },
-      availability: { primary: true, ego: true },
-      dependencies: {
-        ...dependencies,
-        createToken: () => "unused-contender-token",
-        createEgoToken: () => "must-not-acquire-ego",
-        createEgoLeaseId: () => "must-not-create-ego-lease",
-      },
+      owner: contenderOwner,
     }),
-    { code: "TRANSPORT_ATTEMPT_PRIMARY_BUSY" },
+    stopped,
   );
 });
 

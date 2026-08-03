@@ -55,8 +55,15 @@ test("skill proves browser and provider readiness before preparing outbound sour
   assert.ok(defaultAttempt < legacyGate);
   assert.match(gate, /transport-attempt \\\n+\s+--action start/);
   assert.match(gate, /--action status/);
+  assert.match(gate, /collaboration-outcome \\\n+\s+--workspace-id/);
+  assert.match(gate, /[Ii]nclude its returned `statement` verbatim/);
+  assert.match(gate, /sourceEgress=not_authorized/);
+  assert.match(
+    gate,
+    /Playwright[\s\S]*independent Codex evidence[\s\S]*not a transport fallback/,
+  );
   assert.match(gate, /intentionally never returns either capability/);
-  assert.match(gate, /TRANSPORT_ATTEMPT_PRIMARY_BUSY/);
+  assert.match(gate, /reason: "primary_probe_in_progress"/);
   assert.match(gate, /does not include an\s+Ego task-space identity/);
   assert.match(gate, /Only this decision permits source\s+selection and capsule preparation/);
   assert.match(
@@ -765,6 +772,7 @@ test("CLI exposes machine-readable help and version without repository context",
     [
       "preflight",
       "transport-attempt",
+      "collaboration-outcome",
       "transport-gate",
       "ego-bootstrap-lease",
       "pack",

@@ -215,6 +215,14 @@ replay is idempotent; a receipt replay never rewrites a newer active owner.
 Raw capabilities remain confined to the private attempt checkpoint and are
 never returned by `transport-attempt`.
 
+Pre-egress adapter exhaustion is written as a terminal attempt before it is
+reported. The route-bound `collaboration-outcome` reader combines that exact
+attempt only with a matching optional run head and emits controlled authority
+fields plus canonical report text. It distinguishes denied egress authority
+from observed non-egress, preserves send reconciliation and ambiguous delivery,
+and labels local Browser, Playwright, repository, and staging checks as
+independent Codex evidence rather than external collaborator evidence.
+
 Ego Browser is the sole pre-send alternative after a conclusive primary
 outage. Its skill and CLI must already be installed. Before any Ego invocation,
 the controller acquires one local account-bootstrap lease. The record is

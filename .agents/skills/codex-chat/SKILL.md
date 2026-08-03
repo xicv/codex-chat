@@ -73,7 +73,8 @@ Follow only the returned `decision` and `nextAction`:
   the failure and selects Ego when it is available. `unavailable` neutrally
   releases the primary claim before fallback. Never call `js_reset`, loop, or
   switch to another `node_repl` surface. If another coordinator owns the probe,
-  `TRANSPORT_ATTEMPT_PRIMARY_BUSY` stops this attempt without starting Ego.
+  the contender durably returns `stop` with
+  `reason: "primary_probe_in_progress"` and does not start Ego.
 - `observe_primary_page`: make one read-only Browser observation of the exact
   target. Pass only a candidate target ID and the bounded readiness fields
   accepted by `ego-readiness.mjs` using `--action observe_primary_page`. Never
@@ -146,6 +147,33 @@ only its exact `nextAction` with the original availability and observation.
 The controller verifies the request digest and replays the exact capability
 idempotently. Never substitute a different observation, route, coordinator,
 or attempt, and never extract the private capability from local state.
+
+Before reporting a stopped branch, ending the task, or handing the work back
+to local-only execution, generate the canonical outcome from the same immutable
+route. Add `--run-id <run-id>` after run creation; omit it before run creation:
+
+```bash
+node <skill>/scripts/codex-chat.mjs collaboration-outcome \
+  --workspace-id <workspace-id> \
+  --coordinator-id <coordinator-id> \
+  --work-unit-id <work-unit-id> \
+  --agent-id <agent-id> \
+  --attempt-id <attempt-id> \
+  [--run-id <run-id>]
+```
+
+This command reads durable attempt and optional run state without changing
+either. Include its returned `statement` verbatim in the user-facing report,
+then add only clearly labeled local evidence. Do not replace its controlled
+classification with prose such as "no usable receipt", "not submitted", or
+"no source left the Mac". In particular, `sourceEgress=not_authorized` states
+what the protocol permitted; it is not a browser-network observation.
+`send_reconciliation_required` and `delivery_ambiguous` must never be reported
+as non-delivery. Browser transport, provider readiness, capsule preparation,
+send reservation, confirmed submission, external response, and accepted local
+verification remain separate states. Playwright, another local browser,
+repository inspection, or staging evidence is independent Codex evidence and
+not a transport fallback or an external collaborator result.
 
 ### Legacy low-level diagnostics
 

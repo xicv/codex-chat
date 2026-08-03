@@ -373,6 +373,7 @@ test("an exact resolved claim replay cannot mutate a newer coordinator's active 
     clock: fixedClock("2026-07-31T02:31:04.000Z"),
   });
   assert.equal(newer.reason, "transport_closed_recorded");
+  assert.equal(newer.retryAfter, "2026-07-31T02:36:04.000Z");
 });
 
 test("transport state refuses a symlinked gate record", async () => {

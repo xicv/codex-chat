@@ -140,6 +140,11 @@ use a session authenticated by the user.
     owns the handler, required and optional options, repeatable options,
     dispatch, and machine-readable help. Unknown or misspelled options fail
     before any command side effect.
+20. **Report collaboration state mechanically.** A route-bound outcome command
+    separates transport readiness, capsule authority, possible egress,
+    submission, response availability, and accepted verification. Local
+    Playwright or staging evidence remains independent Codex evidence and can
+    never be described as an external-collaborator transport fallback.
 
 The complete rules live in
 [`SKILL.md`](.agents/skills/codex-chat/SKILL.md), with detailed protocol and
@@ -317,11 +322,11 @@ Current local evidence:
 
 | Gate | Result |
 | --- | ---: |
-| Unit tests | 225/225 |
-| Contract tests | 39/39 |
+| Unit tests | 238/238 |
+| Contract tests | 41/41 |
 | Chaos/recovery tests | 5/5 |
 | Local E2E tests | 3/3 |
-| Aggregate test gate | 272/272 |
+| Aggregate test gate | 287/287 |
 | Independent scratch verification | Passed |
 | Repository source scan | Clean |
 | Installed skill parity / secret scan | Exact / Clean |
@@ -361,6 +366,14 @@ node .agents/skills/codex-chat/scripts/codex-chat.mjs capsule-validate \
   --receipt-sha256 <capsule-receipt-sha256> \
   --transport-kind browser \
   --upload-capability unknown
+
+node .agents/skills/codex-chat/scripts/codex-chat.mjs collaboration-outcome \
+  --workspace-id <workspace-id> \
+  --coordinator-id <coordinator-id> \
+  --work-unit-id <work-unit-id> \
+  --agent-id <agent-id> \
+  --attempt-id <attempt-id> \
+  --run-id <run-id>
 
 node .agents/skills/codex-chat/scripts/codex-chat.mjs manifest \
   --root "$PWD" \
@@ -419,6 +432,7 @@ replay, and final tamper checks. The CLI never replaces an existing artifact.
 | --- | --- |
 | `preflight` | Validate source selection, state location, VCS metadata, and scanner availability |
 | `transport-attempt` | Own the durable Browser-to-Ego readiness state machine, write-ahead side effects, exact crash replay, immutable route binding, private capabilities, and resumable status |
+| `collaboration-outcome` | Read the route-bound attempt and optional run, classify exact egress/submission/response authority, and emit canonical non-ambiguous report text |
 | `transport-gate` | Serialize primary-browser health probes, remember a closed host generation, neutrally release an unused claim, and allow one bounded half-open probe after a host restart or cooldown |
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
 | `prepare-capsule` | Atomically prepare, scan, content-address, and commit one context/task/transport capsule with idempotent crash recovery |
@@ -458,6 +472,11 @@ model label, agentic allowance, upload capability, and API budget separately.
   capability-digest receipts. A checkpoint crash can replay only the exact
   action; replay of an older resolution cannot mutate a newer coordinator's
   active claim or lease.
+- Conclusive pre-egress exhaustion is a durable terminal attempt rather than
+  an exception over stale pending state. Canonical outcome reporting preserves
+  exact reason, retry time, restart observation, and the difference between
+  denied egress authority, unreserved send, ambiguous delivery, confirmed
+  submission, received response, and locally accepted result.
 - After a conclusive primary outage, an already-installed Ego Browser is the
   only fallback. It gets one isolated task space and one read-only readiness
   attempt. If login or verification is required, control returns to the user;

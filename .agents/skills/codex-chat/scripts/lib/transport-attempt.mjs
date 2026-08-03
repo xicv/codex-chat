@@ -23,6 +23,8 @@ import {
 const RECORD_SCHEMA = "CODEX_CHAT_TRANSPORT_ATTEMPT_V1";
 const RESULT_SCHEMA = "codex-chat/transport-attempt-result/v1";
 const MAX_RECORD_BYTES = 32 * 1024;
+const REASON = /^[a-z][a-z0-9_]{0,127}$/u;
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const OWNER_KEYS = Object.freeze([
   "workspaceId",
   "coordinatorId",
@@ -131,6 +133,9 @@ function validateRecord(record) {
   const pendingReason = record?.pendingReason ?? null;
   const pendingAction = record?.pendingAction ?? null;
   const pendingRequestSha256 = record?.pendingRequestSha256 ?? null;
+  const failureReason = record?.failureReason ?? null;
+  const retryAfter = record?.retryAfter ?? null;
+  const restartVerified = record?.restartVerified ?? null;
   if (
     record?.schema !== RECORD_SCHEMA ||
     !exactKeys(record.owner, OWNER_KEYS) ||
@@ -165,6 +170,23 @@ function validateRecord(record) {
         : pendingEffect === "ego_acquire"
           ? record.phase === "ego_readiness_pending"
           : true
+    ) ||
+    !(
+      record.phase === "stopped"
+        ? REASON.test(failureReason ?? "")
+        : failureReason === null
+    ) ||
+    !(
+      retryAfter === null ||
+      (
+        RFC3339.test(retryAfter) &&
+        Number.isFinite(Date.parse(retryAfter))
+      )
+    ) ||
+    ![null, true, false].includes(restartVerified) ||
+    !(
+      record.phase === "stopped" ||
+      (retryAfter === null && restartVerified === null)
     ) ||
     !(
       record.phase === "primary_probe_pending"
@@ -202,13 +224,20 @@ function validateRecord(record) {
             )
           : record.phase === "stopped"
             ? (
-                validText(record.initialTargetId, 512) &&
                 (
-                  record.preservedDraftTargetId === null ||
-                  record.preservedDraftTargetId === record.initialTargetId
+                  (
+                    record.initialTargetId === null &&
+                    record.preservedDraftTargetId === null
+                  ) ||
+                  (
+                    validText(record.initialTargetId, 512) &&
+                    (
+                      record.preservedDraftTargetId === null ||
+                      record.preservedDraftTargetId === record.initialTargetId
+                    )
+                  )
                 ) &&
-                record.boundTargetId === null &&
-                validText(record.failureReason, 256)
+                record.boundTargetId === null
               )
             : (
               record.initialTargetId === null &&
@@ -225,7 +254,7 @@ function validateRecord(record) {
       record.phase === "ready"
         ? ["browser", "ego"].includes(record.adapter)
         : record.phase === "stopped"
-          ? ["browser", "ego"].includes(record.adapter)
+          ? [null, "browser", "ego"].includes(record.adapter)
         : record.adapter === null
     ) ||
     !(
@@ -234,12 +263,24 @@ function validateRecord(record) {
             record.taskSpaceId === null ||
             (Number.isSafeInteger(record.taskSpaceId) && record.taskSpaceId > 0)
           )
-        : record.phase === "ready" || record.phase === "stopped"
+        : record.phase === "ready"
           ? (
               record.adapter === "ego"
                 ? Number.isSafeInteger(record.taskSpaceId) && record.taskSpaceId > 0
                 : record.taskSpaceId === null
             )
+          : record.phase === "stopped"
+            ? (
+                record.adapter === "ego"
+                  ? (
+                      record.taskSpaceId === null ||
+                      (
+                        Number.isSafeInteger(record.taskSpaceId) &&
+                        record.taskSpaceId > 0
+                      )
+                    )
+                  : record.taskSpaceId === null
+              )
           : record.taskSpaceId === null
     )
   ) {
@@ -256,6 +297,9 @@ function validateRecord(record) {
     pendingReason,
     pendingAction,
     pendingRequestSha256,
+    failureReason,
+    retryAfter,
+    restartVerified,
   };
 }
 
@@ -426,6 +470,7 @@ function readyResult(record) {
 }
 
 function stoppedResult(record) {
+  const beforeProviderReadiness = record.initialTargetId === null;
   return {
     schema: RESULT_SCHEMA,
     attemptId: record.owner.attemptId,
@@ -435,9 +480,17 @@ function stoppedResult(record) {
     adapter: record.adapter,
     reason: record.failureReason,
     ...(record.adapter === "ego" ? { taskSpaceId: record.taskSpaceId } : {}),
+    ...(beforeProviderReadiness
+      ? {
+          retryAfter: record.retryAfter,
+          restartVerified: record.restartVerified,
+        }
+      : {}),
     targetId: null,
     preservedDraftTargetId: record.preservedDraftTargetId,
-    nextAction: "preserve_draft_and_stop",
+    nextAction: beforeProviderReadiness
+      ? "report_exact_outcome_and_stop"
+      : "preserve_draft_and_stop",
   };
 }
 
@@ -485,12 +538,6 @@ async function acquirePrescribedEgo({
     leaseToken,
     clock: dependencies.clock,
   });
-  if (!lease.acquired || lease.leaseToken === null) {
-    fail(
-      "TRANSPORT_ATTEMPT_EGO_BUSY",
-      `Ego bootstrap is unavailable: ${lease.reason}.`,
-    );
-  }
   return lease;
 }
 
@@ -551,11 +598,46 @@ function initialRecord({
     providerPath: null,
     adapter: null,
     taskSpaceId: null,
+    failureReason: null,
+    retryAfter: null,
+    restartVerified: null,
     pendingEffect,
     pendingReason,
     pendingAction,
     pendingRequestSha256,
   };
+}
+
+async function transitionToStopped({
+  current,
+  paths,
+  adapter,
+  reason,
+  retryAfter = null,
+  restartVerified = null,
+}) {
+  const next = {
+    ...current,
+    sequence: current.sequence + 1,
+    phase: "stopped",
+    primaryClaimToken: null,
+    egoLeaseId: null,
+    egoLeaseToken: null,
+    boundTargetId: null,
+    providerOrigin: null,
+    providerPath: null,
+    adapter,
+    taskSpaceId: adapter === "ego" ? current.taskSpaceId : null,
+    failureReason: reason,
+    retryAfter,
+    restartVerified,
+    pendingEffect: null,
+    pendingReason: null,
+    pendingAction: null,
+    pendingRequestSha256: null,
+  };
+  await atomicWrite(paths.record, next);
+  return stoppedResult(next);
 }
 
 async function completeEgoAcquisition({
@@ -572,6 +654,15 @@ async function completeEgoAcquisition({
     leaseToken: pending.egoLeaseToken,
     dependencies,
   });
+  if (!lease.acquired || lease.leaseToken === null) {
+    return transitionToStopped({
+      current: pending,
+      paths,
+      adapter: "ego",
+      reason: `ego_${lease.reason}`,
+      retryAfter: lease.retryAfter,
+    });
+  }
   await afterSideEffect(dependencies, "ego_acquire");
   const reason = pending.pendingReason;
   const next = {
@@ -676,10 +767,15 @@ export async function advanceTransportAttempt({
         if (pending.pendingEffect === null) return currentResult(pending);
       } else if (availability.primary !== true) {
         if (availability.ego !== true) {
-          fail(
-            "TRANSPORT_ATTEMPT_ADAPTERS_UNAVAILABLE",
-            "Neither primary nor Ego transport is available.",
-          );
+          pending = initialRecord({
+            owner,
+            availability,
+            phase: "stopped",
+          });
+          pending.adapter = null;
+          pending.failureReason = "primary_and_ego_unavailable";
+          await atomicWrite(paths.record, pending);
+          return stoppedResult(pending);
         }
         const lease = newEgoCapability(dependencies);
         pending = initialRecord({
@@ -736,16 +832,24 @@ export async function advanceTransportAttempt({
           return primaryProbeResult(next, gate.reason);
         }
         if (gate.reason === "probe_in_progress") {
-          fail(
-            "TRANSPORT_ATTEMPT_PRIMARY_BUSY",
-            "Another coordinator owns the active primary transport probe.",
-          );
+          return transitionToStopped({
+            current: pending,
+            paths,
+            adapter: "browser",
+            reason: "primary_probe_in_progress",
+            retryAfter: gate.retryAfter,
+            restartVerified: gate.restartVerified,
+          });
         }
         if (!availability.ego) {
-          fail(
-            "TRANSPORT_ATTEMPT_PRIMARY_NOT_READY",
-            `Primary transport probe was not allowed: ${gate.reason}.`,
-          );
+          return transitionToStopped({
+            current: pending,
+            paths,
+            adapter: "browser",
+            reason: `primary_${gate.reason}_ego_unavailable`,
+            retryAfter: gate.retryAfter,
+            restartVerified: gate.restartVerified,
+          });
         }
         const lease = newEgoCapability(dependencies);
         pending = initialRecord({
@@ -827,10 +931,12 @@ export async function advanceTransportAttempt({
         });
         await afterSideEffect(dependencies, "gate_release");
         if (!current.availability.ego) {
-          fail(
-            "TRANSPORT_ATTEMPT_ADAPTERS_EXHAUSTED",
-            "Primary transport is unavailable and the Ego fallback is unavailable.",
-          );
+          return transitionToStopped({
+            current,
+            paths,
+            adapter: "browser",
+            reason: "primary_unavailable_ego_unavailable",
+          });
         }
         return transitionToEgo({
           current,
@@ -872,7 +978,7 @@ export async function advanceTransportAttempt({
         await atomicWrite(paths.record, next);
         return primaryProbeResult(next, "rediscovery_probe_required");
       }
-      await transportGate({
+      const gate = await transportGate({
         action: "failure",
         claimToken: current.primaryClaimToken,
         transportStateDir,
@@ -883,10 +989,14 @@ export async function advanceTransportAttempt({
       });
       await afterSideEffect(dependencies, "gate_failure");
       if (!current.availability.ego) {
-        fail(
-          "TRANSPORT_ATTEMPT_ADAPTERS_EXHAUSTED",
-          "Primary transport closed and the Ego fallback is unavailable.",
-        );
+        return transitionToStopped({
+          current,
+          paths,
+          adapter: "browser",
+          reason: "primary_transport_closed_ego_unavailable",
+          retryAfter: gate.retryAfter,
+          restartVerified: gate.restartVerified,
+        });
       }
       return transitionToEgo({
         current,

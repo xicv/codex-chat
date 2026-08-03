@@ -30,6 +30,42 @@ test("the installed CLI starts a route-bound transport attempt without exposing 
   assert.equal(JSON.stringify(result.json).includes("claimToken"), false);
 });
 
+test("the installed CLI preserves pending Ego continuation in its canonical outcome", async () => {
+  const transportStateDir = await tempDir("codex-chat-pending-outcome-cli-");
+  const route = [
+    "--workspace-id", "workspace-pending",
+    "--coordinator-id", "coordinator-pending",
+    "--work-unit-id", "work-unit-pending",
+    "--agent-id", "agent-pending",
+    "--attempt-id", "attempt-pending",
+  ];
+  const started = await runCli([
+    "transport-attempt",
+    "--action", "start",
+    "--transport-state-dir", transportStateDir,
+    ...route,
+    "--primary-available", "false",
+    "--ego-available", "true",
+  ]);
+  assert.equal(started.code, 0);
+
+  const outcome = await runCli([
+    "collaboration-outcome",
+    "--transport-state-dir", transportStateDir,
+    ...route,
+  ]);
+
+  assert.equal(outcome.code, 0);
+  assert.equal(outcome.json.data.classification, "transport_pending_pre_egress");
+  assert.equal(outcome.json.data.disposition, "continue_required");
+  assert.equal(outcome.json.data.attempt.decision, "observe_ego_initial");
+  assert.equal(outcome.json.data.attempt.nextAction, "inspect_initial_target");
+  assert.match(
+    outcome.json.data.statement,
+    /reason=attempt_resumed; disposition=continue_required; decision=observe_ego_initial; nextAction=inspect_initial_target/u,
+  );
+});
+
 test("the installed CLI bounds inline transport observations before parsing", async () => {
   const transportStateDir = await tempDir("codex-chat-attempt-inline-limit-");
   const result = await runCli([

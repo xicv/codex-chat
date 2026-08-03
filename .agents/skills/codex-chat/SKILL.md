@@ -164,7 +164,12 @@ node <skill>/scripts/codex-chat.mjs collaboration-outcome \
 
 This command reads durable attempt and optional run state without changing
 either. Include its returned `statement` verbatim in the user-facing report,
-then add only clearly labeled local evidence. Do not replace its controlled
+then add only clearly labeled local evidence. Never end, stop, hand off, or
+switch to local-only execution while the outcome is
+`transport_pending_pre_egress` or its statement contains
+`disposition=continue_required`. Continue with the exact returned `decision`
+and `nextAction`, then read the outcome again. A pending statement is a durable
+checkpoint, not a terminal collaborator result. Do not replace its controlled
 classification with prose such as "no usable receipt", "not submitted", or
 "no source left the Mac". In particular, `sourceEgress=not_authorized` states
 what the protocol permitted; it is not a browser-network observation.

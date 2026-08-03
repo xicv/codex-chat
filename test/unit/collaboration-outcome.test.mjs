@@ -86,6 +86,28 @@ test("a stopped transport produces an exact pre-egress report", () => {
   });
 });
 
+test("a pending transport explicitly requires its returned next action", () => {
+  const result = buildCollaborationOutcome({
+    owner: OWNER,
+    attempt: attempt({
+      phase: "ego_readiness_pending",
+      decision: "observe_ego_initial",
+      adapter: "ego",
+      reason: "attempt_resumed",
+      retryAfter: undefined,
+      restartVerified: undefined,
+      nextAction: "inspect_initial_target",
+    }),
+  });
+
+  assert.equal(result.classification, "transport_pending_pre_egress");
+  assert.equal(result.disposition, "continue_required");
+  assert.match(
+    result.statement,
+    /disposition=continue_required; decision=observe_ego_initial; nextAction=inspect_initial_target/u,
+  );
+});
+
 test("a ready binding authorizes capsule preparation but does not claim a send", () => {
   const result = buildCollaborationOutcome({
     owner: OWNER,
@@ -233,6 +255,21 @@ test("canonical report fields reject statement-delimiter injection", () => {
     () => buildCollaborationOutcome({
       owner: OWNER,
       attempt: attempt({ retryAfter: "0" }),
+    }),
+    { code: "COLLABORATION_OUTCOME_ATTEMPT_INVALID" },
+  );
+  assert.throws(
+    () => buildCollaborationOutcome({
+      owner: OWNER,
+      attempt: attempt({
+        phase: "ego_readiness_pending",
+        decision: "observe_ego_initial",
+        adapter: "ego",
+        reason: "attempt_resumed",
+        retryAfter: undefined,
+        restartVerified: undefined,
+        nextAction: "inspect_initial_target; sourceEgress=confirmed",
+      }),
     }),
     { code: "COLLABORATION_OUTCOME_ATTEMPT_INVALID" },
   );

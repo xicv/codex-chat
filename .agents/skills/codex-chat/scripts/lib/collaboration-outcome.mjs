@@ -282,13 +282,18 @@ function runAuthority(run) {
   );
 }
 
-function statementFor({ classification, attempt, authority }) {
+function statementFor({ classification, disposition, attempt, authority }) {
   const retry = attempt.retryAfter === undefined || attempt.retryAfter === null
     ? ""
     : `; retryAfter=${attempt.retryAfter}`;
+  const continuation = disposition === "continue_required"
+    ? `disposition=${disposition}; decision=${attempt.decision}; ` +
+      `nextAction=${attempt.nextAction}; `
+    : "";
   return "External collaborator outcome: " +
     `${classification}; adapter=${attempt.adapter ?? "none"}; ` +
     `reason=${attempt.reason}${retry}; ` +
+    continuation +
     `capsulePreparation=${authority.capsulePreparation}; ` +
     `sourceEgress=${authority.sourceEgress}; ` +
     `externalTurn=${authority.externalTurn}; ` +
@@ -312,6 +317,9 @@ export function buildCollaborationOutcome({ owner, attempt, run = null }) {
   const assessment = run === null
     ? noRunAuthority(attempt)
     : runAuthority(run);
+  const disposition = assessment.classification === "transport_pending_pre_egress"
+    ? "continue_required"
+    : null;
   const attemptView = {
     attemptId: attempt.attemptId,
     sequence: attempt.sequence,
@@ -338,11 +346,13 @@ export function buildCollaborationOutcome({ owner, attempt, run = null }) {
   return {
     schema: RESULT_SCHEMA,
     classification: assessment.classification,
+    ...(disposition === null ? {} : { disposition }),
     attempt: attemptView,
     run: runView,
     authority: assessment.authority,
     statement: statementFor({
       classification: assessment.classification,
+      disposition,
       attempt: attemptView,
       authority: assessment.authority,
     }),

@@ -413,6 +413,12 @@ The same registry validates dispatch, so help cannot advertise a command that
 has no handler and a command cannot silently accept an undeclared option.
 Unknown options fail with `USAGE` before the selected handler runs.
 
+When `collaboration-outcome` reports `transport_pending_pre_egress`, it also
+returns `disposition=continue_required` and repeats the exact transport
+`decision` and `nextAction` in its canonical statement. That statement is a
+durable checkpoint: the coordinator must execute the prescribed read-only
+continuation and must not report the pending state as a terminal blocker.
+
 Atomic capsule preparation uses a private store outside the source root. Its
 content-addressed context, task-envelope, and transport-manifest artifacts are
 non-authoritative until the create-once capsule receipt is published last.
@@ -432,7 +438,7 @@ replay, and final tamper checks. The CLI never replaces an existing artifact.
 | --- | --- |
 | `preflight` | Validate source selection, state location, VCS metadata, and scanner availability |
 | `transport-attempt` | Own the durable Browser-to-Ego readiness state machine, write-ahead side effects, exact crash replay, immutable route binding, private capabilities, and resumable status |
-| `collaboration-outcome` | Read the route-bound attempt and optional run, classify exact egress/submission/response authority, and emit canonical non-ambiguous report text |
+| `collaboration-outcome` | Read the route-bound attempt and optional run, classify exact egress/submission/response authority, and emit canonical report text with mandatory continuation fields for pending transport |
 | `transport-gate` | Serialize primary-browser health probes, remember a closed host generation, neutrally release an unused claim, and allow one bounded half-open probe after a host restart or cooldown |
 | `pack` | Create and scan a deterministic `COLLAB_CONTEXT_V1` artifact |
 | `prepare-capsule` | Atomically prepare, scan, content-address, and commit one context/task/transport capsule with idempotent crash recovery |

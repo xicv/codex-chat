@@ -88,6 +88,11 @@ that introduced each change; merge-only commits are omitted.
 
 ### Fixed
 
+- Pending pre-egress collaboration outcomes now carry
+  `disposition=continue_required` and preserve the exact transport `decision`
+  and `nextAction` in their canonical report. Coordinators are explicitly
+  prohibited from presenting these durable checkpoints as terminal blockers or
+  local-only handoffs.
 - Transport exhaustion before provider readiness now persists a terminal
   attempt for missing adapters, unavailable primary tooling, active same-host
   cooldown without Ego, repeated `Transport closed` without Ego, and a

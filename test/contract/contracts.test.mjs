@@ -57,6 +57,10 @@ test("skill proves browser and provider readiness before preparing outbound sour
   assert.match(gate, /--action status/);
   assert.match(gate, /collaboration-outcome \\\n+\s+--workspace-id/);
   assert.match(gate, /[Ii]nclude its returned `statement` verbatim/);
+  assert.match(
+    gate,
+    /Never end, stop, hand off, or\s+switch to local-only execution while[\s\S]*`disposition=continue_required`[\s\S]*exact returned `decision`\s+and `nextAction`/,
+  );
   assert.match(gate, /sourceEgress=not_authorized/);
   assert.match(
     gate,

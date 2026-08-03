@@ -140,6 +140,11 @@ reports `submitted_response_pending`. Terminal response, review, validation,
 revision, and acceptance remain distinct classifications.
 
 The generated `statement` is the required user-facing collaboration report.
+For `transport_pending_pre_egress`, the result and statement carry
+`disposition=continue_required` plus the exact attempt `decision` and
+`nextAction`. This is a durable checkpoint, not a terminal result: the
+coordinator must execute that continuation and re-read the route-bound outcome
+before it can stop, hand off, or switch to local-only execution.
 Local Browser, Playwright, repository, document, or staging checks may be
 reported separately as independent Codex evidence. They are not alternate
 external-collaborator transports and never supply external collaborator claims.

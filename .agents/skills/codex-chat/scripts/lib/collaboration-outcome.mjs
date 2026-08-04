@@ -1,10 +1,22 @@
 import { fail } from "./errors.mjs";
+import { deriveRunNextAction } from "./state.mjs";
 
 const ATTEMPT_SCHEMA = "codex-chat/transport-attempt-result/v1";
 const RESULT_SCHEMA = "codex-chat/collaboration-outcome/v1";
 const TEXT = /^[^\u0000-\u001f\u007f]{1,512}$/u;
 const TOKEN = /^[a-z][a-z0-9_]{0,127}$/u;
+const RUN_ACTION = /^[a-z][a-z0-9-]{0,127}$/u;
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+const RUN_DISPOSITIONS = Object.freeze({
+  capsule_prepared_not_sent: "continue_required",
+  send_reconciliation_required: "reconcile_required",
+  submitted_response_pending: "observe_required",
+  delivery_ambiguous: "reconcile_required",
+  external_response_available: "continue_required",
+  collaboration_accepted: "complete",
+  collaboration_blocked: "stop_required",
+  human_action_required: "human_required",
+});
 
 function validText(value) {
   return typeof value === "string" && TEXT.test(value);
@@ -100,13 +112,19 @@ function validateAttempt(owner, attempt) {
 }
 
 function validateRun(owner, run) {
+  const expectedNextAction = deriveRunNextAction(
+    run?.phase,
+    run?.suspended !== undefined && run.suspended !== null,
+  );
   if (
     run?.schemaVersion !== 1 ||
     run.protocolVersion !== 1 ||
     !validText(run.runId) ||
     !Number.isSafeInteger(run.eventCount) ||
     run.eventCount < 1 ||
-    !validText(run.phase)
+    !validText(run.phase) ||
+    !RUN_ACTION.test(run.nextAction ?? "") ||
+    run.nextAction !== expectedNextAction
   ) {
     fail(
       "COLLABORATION_OUTCOME_RUN_INVALID",
@@ -282,14 +300,16 @@ function runAuthority(run) {
   );
 }
 
-function statementFor({ classification, disposition, attempt, authority }) {
+function statementFor({ classification, disposition, attempt, run, authority }) {
   const retry = attempt.retryAfter === undefined || attempt.retryAfter === null
     ? ""
     : `; retryAfter=${attempt.retryAfter}`;
-  const continuation = disposition === "continue_required"
-    ? `disposition=${disposition}; decision=${attempt.decision}; ` +
-      `nextAction=${attempt.nextAction}; `
-    : "";
+  const continuation = run !== null
+    ? `disposition=${disposition}; nextAction=${run.nextAction}; `
+    : disposition === "continue_required"
+      ? `disposition=${disposition}; decision=${attempt.decision}; ` +
+        `nextAction=${attempt.nextAction}; `
+      : "";
   return "External collaborator outcome: " +
     `${classification}; adapter=${attempt.adapter ?? "none"}; ` +
     `reason=${attempt.reason}${retry}; ` +
@@ -317,9 +337,17 @@ export function buildCollaborationOutcome({ owner, attempt, run = null }) {
   const assessment = run === null
     ? noRunAuthority(attempt)
     : runAuthority(run);
-  const disposition = assessment.classification === "transport_pending_pre_egress"
-    ? "continue_required"
-    : null;
+  const disposition = run === null
+    ? assessment.classification === "transport_pending_pre_egress"
+      ? "continue_required"
+      : null
+    : RUN_DISPOSITIONS[assessment.classification];
+  if (run !== null && disposition === undefined) {
+    fail(
+      "COLLABORATION_OUTCOME_RUN_INVALID",
+      `Collaboration outcome has no disposition for ${assessment.classification}.`,
+    );
+  }
   const attemptView = {
     attemptId: attempt.attemptId,
     sequence: attempt.sequence,
@@ -342,6 +370,7 @@ export function buildCollaborationOutcome({ owner, attempt, run = null }) {
         eventSequence: run.eventCount,
         phase: run.phase,
         sendConfirmed: run.outbound?.confirmed === true,
+        nextAction: run.nextAction,
       };
   return {
     schema: RESULT_SCHEMA,
@@ -354,6 +383,7 @@ export function buildCollaborationOutcome({ owner, attempt, run = null }) {
       classification: assessment.classification,
       disposition,
       attempt: attemptView,
+      run: runView,
       authority: assessment.authority,
     }),
   };

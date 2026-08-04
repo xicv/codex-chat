@@ -12,6 +12,20 @@ const OWNER = Object.freeze({
   attemptId: "attempt-a",
 });
 
+const RUN_NEXT_ACTION = Object.freeze({
+  prepared: "reserve-send",
+  send_reserved: "reconcile-marker-before-send",
+  send_confirmed: "observe-only-do-not-resend",
+  response_pending_unknown: "observe-and-reconcile-do-not-resend",
+  response_terminal: "review-response",
+  reviewing: "apply-to-explicit-scratch",
+  validating: "run-required-gates",
+  needs_revision: "prepare-bounded-correction",
+  accepted: "complete",
+  blocked: "report-blocker",
+  human_required: "wait-for-human-auth-or-decision",
+});
+
 function attempt(overrides = {}) {
   return {
     schema: "codex-chat/transport-attempt-result/v1",
@@ -37,6 +51,7 @@ function run(phase, overrides = {}) {
     runId: "run-a",
     eventCount: 2,
     phase,
+    nextAction: RUN_NEXT_ACTION[phase],
     routing: {
       workspaceId: "workspace-a",
       coordinatorId: "coordinator-a",
@@ -144,6 +159,7 @@ test("a reserved send reports reconciliation instead of claiming no submission",
       nextAction: "prepare_capsule",
     }),
     run: run("send_reserved", {
+      nextAction: "reconcile-marker-before-send",
       outbound: {
         turnId: "turn-a",
         confirmed: false,
@@ -158,8 +174,14 @@ test("a reserved send reports reconciliation instead of claiming no submission",
   });
 
   assert.equal(result.classification, "send_reconciliation_required");
+  assert.equal(result.disposition, "reconcile_required");
+  assert.equal(result.run.nextAction, "reconcile-marker-before-send");
   assert.equal(result.authority.sourceEgress, "unknown");
   assert.equal(result.authority.externalTurn, "reconciliation_required");
+  assert.match(
+    result.statement,
+    /disposition=reconcile_required; nextAction=reconcile-marker-before-send/u,
+  );
   assert.doesNotMatch(result.statement, /not submitted/u);
 });
 
@@ -192,6 +214,69 @@ test("an ambiguous response preserves confirmed and unconfirmed delivery separat
   assert.equal(unconfirmed.authority.externalTurn, "delivery_ambiguous");
   assert.equal(confirmed.classification, "submitted_response_pending");
   assert.equal(confirmed.authority.externalTurn, "submitted");
+});
+
+test("every durable run outcome reports its operational disposition", () => {
+  const readyAttempt = attempt({
+    phase: "ready",
+    decision: "ready",
+    reason: "primary_ready",
+    retryAfter: undefined,
+    restartVerified: undefined,
+    nextAction: "prepare_capsule",
+  });
+  const cases = [
+    ["prepared", "continue_required"],
+    ["send_reserved", "reconcile_required"],
+    ["send_confirmed", "observe_required"],
+    ["response_pending_unknown", "reconcile_required"],
+    ["response_terminal", "continue_required"],
+    ["reviewing", "continue_required"],
+    ["validating", "continue_required"],
+    ["needs_revision", "continue_required"],
+    ["accepted", "complete"],
+    ["blocked", "stop_required"],
+    ["human_required", "human_required"],
+  ];
+
+  for (const [phase, disposition] of cases) {
+    const confirmed = [
+      "send_confirmed",
+      "response_terminal",
+      "reviewing",
+      "validating",
+      "needs_revision",
+      "accepted",
+    ].includes(phase);
+    const result = buildCollaborationOutcome({
+      owner: OWNER,
+      attempt: readyAttempt,
+      run: run(phase, {
+        outbound: phase === "prepared"
+          ? null
+          : {
+              confirmed,
+              routing: {
+                workspaceId: "workspace-a",
+                coordinatorId: "coordinator-a",
+                workUnitId: "work-a",
+                agentId: "agent-a",
+              },
+            },
+      }),
+    });
+
+    assert.equal(result.disposition, disposition, phase);
+    assert.equal(result.run.nextAction, RUN_NEXT_ACTION[phase], phase);
+    assert.match(
+      result.statement,
+      new RegExp(
+        `disposition=${disposition}; nextAction=${RUN_NEXT_ACTION[phase]}`,
+        "u",
+      ),
+      phase,
+    );
+  }
 });
 
 test("an outcome refuses to combine routes from different coordinators", () => {
@@ -241,7 +326,7 @@ test("a pre-send human blocker does not invent delivery ambiguity", () => {
   assert.equal(result.authority.externalTurn, "not_started");
 });
 
-test("canonical report fields reject statement-delimiter injection", () => {
+test("canonical report fields reject injection and unbound run actions", () => {
   assert.throws(
     () => buildCollaborationOutcome({
       owner: OWNER,
@@ -250,6 +335,38 @@ test("canonical report fields reject statement-delimiter injection", () => {
       }),
     }),
     { code: "COLLABORATION_OUTCOME_ATTEMPT_INVALID" },
+  );
+  assert.throws(
+    () => buildCollaborationOutcome({
+      owner: OWNER,
+      attempt: attempt({
+        phase: "ready",
+        decision: "ready",
+        reason: "primary_ready",
+        retryAfter: undefined,
+        restartVerified: undefined,
+        nextAction: "prepare_capsule",
+      }),
+      run: run("send_reserved", {
+        nextAction: "reconcile-marker-before-send; sourceEgress=confirmed",
+      }),
+    }),
+    { code: "COLLABORATION_OUTCOME_RUN_INVALID" },
+  );
+  assert.throws(
+    () => buildCollaborationOutcome({
+      owner: OWNER,
+      attempt: attempt({
+        phase: "ready",
+        decision: "ready",
+        reason: "primary_ready",
+        retryAfter: undefined,
+        restartVerified: undefined,
+        nextAction: "prepare_capsule",
+      }),
+      run: run("send_reserved", { nextAction: "send" }),
+    }),
+    { code: "COLLABORATION_OUTCOME_RUN_INVALID" },
   );
   assert.throws(
     () => buildCollaborationOutcome({

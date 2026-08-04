@@ -221,8 +221,11 @@ attempt only with a matching optional run head and emits controlled authority
 fields plus canonical report text. It distinguishes denied egress authority
 from observed non-egress, preserves send reconciliation and ambiguous delivery,
 marks pending transport as `continue_required` with its exact bounded decision
-and next action, and labels local Browser, Playwright, repository, and staging
-checks as independent Codex evidence rather than external collaborator evidence.
+and next action. After run creation it reflects only the validated,
+ledger-derived run action and a controlled disposition; delimiter-bearing or
+unsupported actions fail closed before report rendering. Local Browser,
+Playwright, repository, and staging checks remain independent Codex evidence
+rather than external collaborator evidence.
 
 Ego Browser is the sole pre-send alternative after a conclusive primary
 outage. Its skill and CLI must already be installed. Before any Ego invocation,

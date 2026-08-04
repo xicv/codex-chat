@@ -61,6 +61,10 @@ test("skill proves browser and provider readiness before preparing outbound sour
     gate,
     /Never end, stop, hand off, or\s+switch to local-only execution while[\s\S]*`disposition=continue_required`[\s\S]*exact returned `decision`\s+and `nextAction`/,
   );
+  assert.match(
+    gate,
+    /`send_reconciliation_required`[\s\S]*`disposition=reconcile_required`[\s\S]*exact returned run `nextAction`[\s\S]*Never replace either with a free-form transport\s+summary/,
+  );
   assert.match(gate, /sourceEgress=not_authorized/);
   assert.match(
     gate,

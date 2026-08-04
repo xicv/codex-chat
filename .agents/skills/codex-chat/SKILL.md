@@ -169,8 +169,13 @@ switch to local-only execution while the outcome is
 `transport_pending_pre_egress` or its statement contains
 `disposition=continue_required`. Continue with the exact returned `decision`
 and `nextAction`, then read the outcome again. A pending statement is a durable
-checkpoint, not a terminal collaborator result. Do not replace its controlled
-classification with prose such as "no usable receipt", "not submitted", or
+checkpoint, not a terminal collaborator result. A
+`send_reconciliation_required` outcome carries
+`disposition=reconcile_required`; preserve the bound run and execute only the
+exact returned run `nextAction`. Never replace either with a free-form transport
+summary, and never rename reconciliation as delivery ambiguity unless the
+canonical classification is exactly `delivery_ambiguous`. Do not replace its
+controlled classification with prose such as "no usable receipt", "not submitted", or
 "no source left the Mac". In particular, `sourceEgress=not_authorized` states
 what the protocol permitted; it is not a browser-network observation.
 `send_reconciliation_required` and `delivery_ambiguous` must never be reported

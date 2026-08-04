@@ -145,6 +145,13 @@ For `transport_pending_pre_egress`, the result and statement carry
 `nextAction`. This is a durable checkpoint, not a terminal result: the
 coordinator must execute that continuation and re-read the route-bound outcome
 before it can stop, hand off, or switch to local-only execution.
+After run creation, every outcome carries a controlled disposition and the
+ledger-derived run `nextAction`. A `send_reserved` head is reported as
+`send_reconciliation_required` with `disposition=reconcile_required` and
+`nextAction=reconcile-marker-before-send`. The reservation is preserved for
+read-only reconciliation; this classification must not be renamed
+`delivery_ambiguous` unless the durable run has transitioned to the corresponding
+response-pending state.
 Local Browser, Playwright, repository, document, or staging checks may be
 reported separately as independent Codex evidence. They are not alternate
 external-collaborator transports and never supply external collaborator claims.

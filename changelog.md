@@ -88,6 +88,12 @@ that introduced each change; merge-only commits are omitted.
 
 ### Fixed
 
+- Durable run outcomes now preserve their ledger-derived `nextAction` and add a
+  controlled operational disposition to the canonical report. In particular,
+  a pre-action `send_reserved` transport loss reports
+  `send_reconciliation_required`, `disposition=reconcile_required`, and
+  `nextAction=reconcile-marker-before-send` instead of free-form delivery
+  ambiguity.
 - Pending pre-egress collaboration outcomes now carry
   `disposition=continue_required` and preserve the exact transport `decision`
   and `nextAction` in their canonical report. Coordinators are explicitly

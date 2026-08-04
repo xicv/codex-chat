@@ -196,4 +196,49 @@ test("the installed CLI binds a prepared run to the same coordinator route", asy
   assert.equal(outcome.json.data.run.phase, "prepared");
   assert.equal(outcome.json.data.authority.sourceEgress, "not_reserved");
   assert.equal(outcome.json.data.authority.externalTurn, "not_started");
+
+  await recordEvent({
+    stateDir,
+    runId: "run-outcome-cli",
+    event: "send_reserved",
+    data: {
+      turnId: "turn-outcome-cli",
+      marker: "OUTCOME_CLI_MARKER",
+      expectedTerminalMarker: "OUTCOME_CLI_TERMINAL",
+      payloadSha256: "a".repeat(64),
+      conversationIdentity: "conversation-outcome-cli",
+      routing: {
+        workspaceId: "workspace-run",
+        coordinatorId: "coordinator-run",
+        workUnitId: "work-unit-run",
+        agentId: "agent-run",
+      },
+    },
+    expectedSequence: 1,
+    expectedState: "prepared",
+    idempotencyKey: "outcome-cli-send-reserved",
+  });
+
+  const reservedOutcome = await runCli([
+    "collaboration-outcome",
+    "--transport-state-dir", transportStateDir,
+    "--state-dir", stateDir,
+    "--run-id", "run-outcome-cli",
+    ...route,
+  ]);
+
+  assert.equal(reservedOutcome.code, 0);
+  assert.equal(
+    reservedOutcome.json.data.classification,
+    "send_reconciliation_required",
+  );
+  assert.equal(reservedOutcome.json.data.disposition, "reconcile_required");
+  assert.equal(
+    reservedOutcome.json.data.run.nextAction,
+    "reconcile-marker-before-send",
+  );
+  assert.match(
+    reservedOutcome.json.data.statement,
+    /disposition=reconcile_required; nextAction=reconcile-marker-before-send/u,
+  );
 });

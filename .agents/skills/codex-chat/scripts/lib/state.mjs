@@ -88,6 +88,12 @@ const NEXT_ACTION = Object.freeze({
   human_required: "wait-for-human-auth-or-decision",
 });
 
+export function deriveRunNextAction(phase, suspended = false) {
+  return suspended
+    ? "wait-until-resume-after-do-not-resend"
+    : NEXT_ACTION[phase] ?? null;
+}
+
 function stable(value) {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
   if (value && typeof value === "object") {
@@ -930,7 +936,7 @@ function reduce(current, event, data, at) {
         : event === "send_reserved"
           ? null
           : current?.verificationSetSha256 ?? null,
-    nextAction: suspended ? "wait-until-resume-after-do-not-resend" : NEXT_ACTION[phase],
+    nextAction: deriveRunNextAction(phase, suspended !== null),
   };
 }
 

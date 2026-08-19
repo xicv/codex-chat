@@ -30,7 +30,7 @@
       "required": ["number", "url", "draft", "mergeability", "ci_state"],
       "properties": {
         "number": {"type": "integer", "minimum": 1},
-        "url": {"type": "string", "pattern": "^https://github\\.com/"},
+        "url": {"type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$"},
         "draft": {"const": true},
         "mergeability": {"enum": ["mergeable", "conflicting", "unknown"]},
         "ci_state": {"enum": ["pending", "success", "failure", "unknown"]}
@@ -40,11 +40,15 @@
       "type": "array", "maxItems": 30,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["name", "status", "evidence"],
+        "required": ["name", "status", "evidence", "github_run_id", "github_job_id", "runner_name", "artifact_sha256"],
         "properties": {
           "name": {"type": "string", "minLength": 1, "maxLength": 120},
           "status": {"enum": ["success", "failure", "skipped", "pending"]},
-          "evidence": {"type": "string", "maxLength": 1000}
+          "evidence": {"type": "string", "maxLength": 1000},
+          "github_run_id": {"type": ["integer", "null"], "minimum": 1},
+          "github_job_id": {"type": ["integer", "null"], "minimum": 1},
+          "runner_name": {"type": ["string", "null"], "maxLength": 120, "pattern": "^[A-Za-z0-9._-]*$"},
+          "artifact_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
         }
       }
     },

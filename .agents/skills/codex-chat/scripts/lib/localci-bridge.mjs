@@ -3,6 +3,14 @@ import path from "node:path";
 import { readTrustedFileSnapshot } from "./trusted-file-snapshot.mjs";
 import { fail } from "./errors.mjs";
 
+// Independent reviewer-side validator for LocalCI Bridge job/v1 and
+// result/v1 handoffs. This is deliberately a separate implementation from
+// the bridge repository itself: it re-derives every structural decision so a
+// divergence between the two implementations is visible. The authoritative
+// contract lives in the private xicv/localci-bridge repository; the vendored
+// schema copies next to this file carry its commit SHA and digests (see
+// references/schemas/localci-bridge-authority.json and the divergence test).
+
 const JOB_MAX_BYTES = 128 * 1024;
 const RESULT_MAX_BYTES = 256 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -10,7 +18,9 @@ const COMMIT_SHA = /^[a-f0-9]{40}$/u;
 const JOB_ID = /^[a-z0-9][a-z0-9._-]{7,79}$/u;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const BRANCH = /^[A-Za-z0-9._/-]+$/u;
-const PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
+const PATH_PATTERN = /^[A-Za-z0-9._/*?-]+$/u;
+const SENDER_ALIAS = /^[a-z0-9][a-z0-9 ._-]*$/u;
+const RUNNER_NAME = /^[A-Za-z0-9._-]+$/u;
 const URL = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)$/u;
 const FORBIDDEN_PATHS = [
   ".github/workflows/",
@@ -20,6 +30,7 @@ const FORBIDDEN_PATHS = [
   "data/",
   "storage/",
 ];
+// Applied to every free-text field.
 const SENSITIVE_TEXT = [
   /\bpassword\b\s*[:=]/iu,
   /\b(api[_ -]?key|access[_ -]?token|secret[_ -]?key)\b\s*[:=]/iu,
@@ -27,9 +38,34 @@ const SENSITIVE_TEXT = [
   /\bghp_[A-Za-z0-9]{20,}\b/u,
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/u,
   /\bAKIA[0-9A-Z]{16}\b/u,
+  /\bsk_(live|test)_[A-Za-z0-9]{16,}\b/u,
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/u,
+  /\bAIza[0-9A-Za-z_-]{35}\b/u,
   /\bmessage[_ -]?id\b\s*[:=]/iu,
   /\bthread[_ -]?id\b\s*[:=]/iu,
+  /<[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+>/u,
 ];
+// Applied only to sanitized-source fields derived from email.
+const SENSITIVE_SOURCE_TEXT = [
+  /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/u,
+  /https?:\/\/(mail|drive|docs)\.google\.com/iu,
+  /\busercontent\.google\.com\b/iu,
+  /^\s*(from|to|cc|bcc|reply-to|in-reply-to|references|delivered-to|received|return-path|message-id|thread-index|content-type|mime-version|subject|date)\s*:/imu,
+  /<\/?(?:html|body|head|div|span|table|thead|tbody|tr|td|th|ul|ol|li|p|br|hr|img|a|strong|em|b|i|font|style|script)\b/iu,
+  /^\s*--\s*$/mu,
+  /\bsent from my /iu,
+  /\bbest regards,?\s*$/imu,
+  /\battachment[s]?\s*[:=]/iu,
+  /\bgmail[_ -]?attachment\b/iu,
+];
+
+function looksLikePhoneNumber(value) {
+  for (const match of value.matchAll(/\+?\d[\d\s().-]{7,}\d/gu)) {
+    const digits = (match[0].match(/\d/gu) || []).length;
+    if (digits >= 9 && digits <= 15) return true;
+  }
+  return false;
+}
 
 function exactObject(value, keys, label) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -83,6 +119,16 @@ function integerField(value, label, min, max) {
   return value;
 }
 
+function booleanField(value, expected, label) {
+  if (value !== expected) {
+    fail(
+      "LOCALCI_BRIDGE_BOOLEAN_INVALID",
+      `${label} must be ${expected}.`,
+    );
+  }
+  return value;
+}
+
 function utcTimestamp(value, label) {
   stringField(value, label, { max: 64 });
   const parsed = Date.parse(value);
@@ -95,12 +141,18 @@ function utcTimestamp(value, label) {
   return value;
 }
 
-function rejectSensitiveText(value, label) {
-  if (SENSITIVE_TEXT.some((pattern) => pattern.test(value))) {
+function rejectSensitiveText(value, label, { source = false } = {}) {
+  const patterns = source
+    ? [...SENSITIVE_TEXT, ...SENSITIVE_SOURCE_TEXT]
+    : SENSITIVE_TEXT;
+  if (patterns.some((pattern) => pattern.test(value))) {
     fail(
       "LOCALCI_BRIDGE_SENSITIVE_TEXT",
-      `${label} appears to contain a secret or raw mailbox identifier.`,
+      `${label} appears to contain a secret, raw mailbox identifier, contact detail, or unsanitized email content.`,
     );
+  }
+  if (looksLikePhoneNumber(value)) {
+    fail("LOCALCI_BRIDGE_SENSITIVE_TEXT", `${label} appears to contain a phone number.`);
   }
 }
 
@@ -141,6 +193,25 @@ export function bridgeDigest(value) {
   return createHash("sha256").update(canonicalBridgeJson(value)).digest("hex");
 }
 
+// The bridge recomputes this from normalized source fields and requires exact
+// equality; the reviewer-side validator does the same independently.
+export function bridgeSourceFingerprint(source) {
+  exactObject(source, ["kind", "subject", "sender_alias", "received_at", "summary"], "source");
+  enumField(source.kind, ["gmail", "github", "manual"], "source.kind");
+  stringField(source.subject, "source.subject", { max: 200 });
+  stringField(source.sender_alias, "source.sender_alias", { min: 2, max: 64, pattern: SENDER_ALIAS });
+  utcTimestamp(source.received_at, "source.received_at");
+  stringField(source.summary, "source.summary", { max: 3000 });
+  const normalized = {
+    kind: source.kind.trim().toLowerCase(),
+    subject: source.subject.trim().replace(/\s+/gu, " ").toLowerCase(),
+    sender_alias: source.sender_alias.trim().replace(/\s+/gu, " ").toLowerCase(),
+    received_at: source.received_at,
+    summary: source.summary.trim().replace(/\s+/gu, " "),
+  };
+  return createHash("sha256").update(canonicalBridgeJson(normalized)).digest("hex");
+}
+
 async function readBridgeJson(filePath, maxBytes, label) {
   const snapshot = await readTrustedFileSnapshot(filePath, {
     minBytes: 2,
@@ -165,183 +236,262 @@ async function readBridgeJson(filePath, maxBytes, label) {
   }
 }
 
-function validateAllowedPatj˜[YJHÂˆÝš[™ÑšY[
-˜[YKš›Ø‹˜[ÝÙYÜ]È][H‹ÂˆX^ˆˆ]\›ŽˆUÔUT“‹ˆJNÂˆYˆ
-ˆ˜[YKœÝ\ÕÚ]
-‹ÈŠHˆ˜[YKœÝ\ÕÚ]
-ŸˆŠHˆ˜[YKš[˜ÛY\Ê—ŠHˆ]œÜÚ^››Ü›X[^™J˜[YJHOOH˜[YHˆ˜[YHOOH‹ˆˆˆ˜[YKœÝ\ÕÚ]
-‹‹‹ÈŠHˆ˜[YKš[˜ÛY\ÊŠŠ‹ÊŠˆŠHˆ“Ô’QS—ÔUËœÛÛYJ
-™Yš^
-HO‚ˆ˜[YHOOH™Yš^œ™\XÙJ×ÉÝKˆŠH˜[YKœÝ\ÕÚ]
-™Yš^
-Kˆ
-Bˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔUÒS•SQ‹ˆ›Øˆ]\È[œØY™HÜˆ›ÝXÝYˆ	Ý˜[Y_Xˆ
-NÂˆBŸB‚™^Ü[˜Ý[Ûˆ˜[Y]PœšYÙR›ØŠ˜[YK^XÝ][ÛœÊHÂˆ^XÝØš™XÝ
-ˆ^XÝ][ÛœËˆÈœ™\ÜÚ]ÜžH‹˜˜\ÙTÚH‹™Y˜][œ˜[˜Ú—Kˆš›Øˆ^XÝ][ÛœÈ‹ˆ
-NÂˆÝš[™ÑšY[
-^XÝ][ÛœËœ™\ÜÚ]ÜžK™^XÝY™\ÜÚ]ÜžH‹ÂˆX^ˆŒˆ]\›Žˆ‘TÔÒUÔ–KˆJNÂˆÝš[™ÑšY[
-^XÝ][ÛœË˜˜\ÙTÚK™^XÝY˜\ÙHÒH‹ÂˆZ[ŽˆˆX^ˆˆ]\›ŽˆÓÓSRUÔÒKˆJNÂˆÝš[™ÑšY[
-^XÝ][ÛœË™Y˜][œ˜[˜Ú™^XÝYY˜][œ˜[˜Ú‹ÂˆX^ˆLˆ]\›Žˆ”SÒˆJNÂ‚ˆ^XÝØš™XÝ
-˜[YKÂˆœØÚ[XH‹šY‹˜Ü™X]YØ]‹œÛÝ\˜ÙH‹\™Ù]‹\Ú×Ý\H‹›[ÙH‹ˆœš[Üš]H‹š[œÝXÝ[ÛœÈ‹˜XØÙ\[˜ÙWØÜš]\šXH‹˜[ÝÙYÜ]È‹ˆ™\šYšXØ][Û—Ü›Ùš[H‹[Y[Ý]ÛZ[]\È‹œX›\Ú‹ˆK˜œšYÙH›ØˆŠNÂˆYˆ
-˜[YKœØÚ[XHOOH›ØØ[ÚKXœšYÙKÚ›Ø‹ÝŒHŠHÂˆ˜Z[
-“ÐÐSÒWÐ”’QÑWÔÐÒSPWÒS•SQ‹•[œÝ\ÜYœšYÙH›ØˆØÚ[XKˆŠNÂˆBˆÝš[™ÑšY[
-˜[YKšYš›Ø‹šY‹ÈZ[ŽˆX^ˆ]\›Žˆ“Ð—ÒQJNÂˆ]Õ[Y\Ý[\
-˜[YK˜Ü™X]YØ]š›Ø‹˜Ü™X]YØ]ŠNÂ‚ˆ^XÝØš™XÝ
-ˆ˜[YKœÛÝ\˜ÙKˆÈšÚ[™‹™š[™Ù\œš[‹œÝXš™XÝ‹œÙ[™\ˆ‹œ™XÙZ]™YØ]‹œÝ[[X\žH—Kˆš›Ø‹œÛÝ\˜ÙH‹ˆ
-NÂˆ[[QšY[
-˜[YKœÛÝ\˜ÙKšÚ[™È™ÛXZ[‹™Ú]Xˆ‹›X[X[—KœÛÝ\˜ÙKšÚ[™ŠNÂˆÝš[™ÑšY[
-˜[YKœÛÝ\˜ÙK™š[™Ù\œš[œÛÝ\˜ÙK™š[™Ù\œš[‹ÂˆZ[ŽˆˆX^ˆˆ]\›ŽˆÒLM‹ˆJNÂˆÝš[™ÑšY[
-˜[YKœÛÝ\˜ÙKœÝXš™XÝœÛÝ\˜ÙKœÝXš™XÝ‹ÈX^ˆŒJNÂˆÝš[™ÑšY[
-˜[YKœÛÝ\˜ÙKœÙ[™\‹œÛÝ\˜ÙKœÙ[™\ˆ‹ÈX^ˆMŒJNÂˆ]Õ[Y\Ý[\
-˜[YKœÛÝ\˜ÙKœ™XÙZ]™YØ]œÛÝ\˜ÙKœ™XÙZ]™YØ]ŠNÂˆÝš[™ÑšY[
-˜[YKœÛÝ\˜ÙKœÝ[[X\žKœÛÝ\˜ÙKœÝ[[X\žH‹ÈX^ˆÌJNÂˆ›Üˆ
-ÛÛœÝÛX™[^HÙˆÂˆÈœÛÝ\˜ÙKœÝXš™XÝ‹˜[YKœÛÝ\˜ÙKœÝXš™XÝKˆÈœÛÝ\˜ÙKœÙ[™\ˆ‹˜[YKœÛÝ\˜ÙKœÙ[™\—KˆÈœÛÝ\˜ÙKœÝ[[X\žH‹˜[YKœÛÝ\˜ÙKœÝ[[X\žWKˆJH™Z™XÝÙ[œÚ]]™U^
-^X™[
-NÂ‚ˆ^XÝØš™XÝ
-ˆ˜[YK\™Ù]ˆÈœ™\ÜÚ]ÜžH‹˜˜\ÙWÜÚH‹™Y˜][Øœ˜[˜Ú—Kˆš›Ø‹\™Ù]‹ˆ
-NÂˆYˆ
-ˆ˜[YK\™Ù]œ™\ÜÚ]ÜžHOOH^XÝ][ÛœËœ™\ÜÚ]ÜžHˆ˜[YK\™Ù]˜˜\ÙWÜÚHOOH^XÝ][ÛœË˜˜\ÙTÚHˆ˜[YK\™Ù]™Y˜][Øœ˜[˜ÚOOH^XÝ][ÛœË™Y˜][œ˜[˜Úˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÕT‘ÑUÓRTÓPUÒ‹ˆ’›Øˆ\™Ù]Ù\È›ÝX]Ú[™\[™[HÝ\YY^XÝ][ÛœËˆ‹ˆ
-NÂˆB‚ˆ[[QšY[
-˜[YK\Ú×Ý\KÈšXYÙK\™\Ü‹™˜Y\ˆ—Kš›Ø‹\Ú×Ý\HŠNÂˆ[[QšY[
-˜[YK›[ÙKÈœ™XY[Û›H‹ÛÜšÜÜXÙK]Üš]H—Kš›Ø‹›[ÙHŠNÂˆYˆ
-ˆ
-˜[YK\Ú×Ý\HOOHšXYÙK\™\Üˆ	‰ˆ˜[YK›[ÙHOOHœ™XY[Û›HŠHˆ
-˜[YK\Ú×Ý\HOOH™˜Y\ˆˆ	‰ˆ˜[YK›[ÙHOOHÛÜšÜÜXÙK]Üš]HŠBˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÓSÑWÒS•SQ‹ˆ’›Øˆ\H[™^XÝ][Ûˆ[ÙH\™H[˜ÛÛœÚ\Ý[ˆ‹ˆ
-NÂˆBˆ[[QšY[
-ˆ˜[YKœš[Üš]KˆÈœ™YÜ™\ÜÚ[Ûˆ‹œÙXÝ\š]H‹˜YÈ‹™™X]\™H‹™ØÝ[Y[][Ûˆ—Kˆš›Ø‹œš[Üš]H‹ˆ
-NÂˆÝš[™ÑšY[
-˜[YKš[œÝXÝ[ÛœËš›Ø‹š[œÝXÝ[ÛœÈ‹ÈX^ˆLŒJNÂˆ™Z™XÝÙ[œÚ]]™U^
-˜[YKš[œÝXÝ[ÛœËš›Ø‹š[œÝXÝ[ÛœÈŠNÂ‚ˆYˆ
-ˆP\œ˜^Kš\Ð\œ˜^J˜[YK˜XØÙ\[˜ÙWØÜš]\šXJHˆ˜[YK˜XØÙ\[˜ÙWØÜš]\šXK›[™ÝHˆ˜[YK˜XØÙ\[˜ÙWØÜš]\šXK›[™ÝˆÌˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÐPÐÑTSÑWÒS•SQ‹ˆ’›ØˆXØÙ\[˜ÙHÜš]\šXH\™H[˜[Yˆ‹ˆ
-NÂˆBˆ›Üˆ
-ÛÛœÝÜš]\š[ÛˆÙˆ˜[YK˜XØÙ\[˜ÙWØÜš]\šXJHÂˆÝš[™ÑšY[
-Üš]\š[Û‹š›ØˆXØÙ\[˜ÙHÜš]\š[Ûˆ‹ÈX^ˆLJNÂˆ™Z™XÝÙ[œÚ]]™U^
-Üš]\š[Û‹š›ØˆXØÙ\[˜ÙHÜš]\š[ÛˆŠNÂˆB‚ˆYˆ
-ˆP\œ˜^Kš\Ð\œ˜^J˜[YK˜[ÝÙYÜ]ÊHˆ˜[YK˜[ÝÙYÜ]Ë›[™Ýˆˆ™]ÈÙ]
-˜[YK˜[ÝÙYÜ]ÊKœÚ^™HOOH˜[YK˜[ÝÙYÜ]Ë›[™Ýˆ
-HÂˆ˜Z[
-“ÐÐSÒWÐ”’QÑWÔU×ÒS•SQ‹’›Øˆ[ÝÙY]È\™H[˜[YˆŠNÂˆBˆ›Üˆ
-ÛÛœÝ[ÝÙY]Ùˆ˜[YK˜[ÝÙYÜ]ÊH˜[Y]P[ÝÙY]
-[ÝÙY]
-NÂˆYˆ
-ˆ
-˜[YK\Ú×Ý\HOOHšXYÙK\™\Üˆ	‰ˆ˜[YK˜[ÝÙYÜ]Ë›[™ÝOOH
-Hˆ
-˜[YK\Ú×Ý\HOOH™˜Y\ˆˆ	‰ˆ˜[YK˜[ÝÙYÜ]Ë›[™ÝOOH
-Bˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔU×ÒS•SQ‹ˆ’›Øˆ\H[™[ÝÙY]È\™H[˜ÛÛœÚ\Ý[ˆ‹ˆ
-NÂˆB‚ˆYˆ
-ˆ^XÝ][ÛœËœ™\ÜÚ]ÜžHOOHžXÝ‹Ô[ÜT[›™\ˆˆ	‰‚ˆ˜[YK™\šYšXØ][Û—Ü›Ùš[HOOHœ[Ü\[›™\‹\]X[]H‚ˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ“Ñ’SWÒS•SQ‹ˆ”[ÜT[›™\ˆ›ØœÈ]\Ý\ÙH[Ü\[›™\‹\]X[]Kˆ‹ˆ
-NÂˆBˆÝš[™ÑšY[
-˜[YK™\šYšXØ][Û—Ü›Ùš[Kš›Ø‹™\šYšXØ][Û—Ü›Ùš[H‹ÂˆX^ˆˆ]\›Žˆ×–ØK^—VØK^ŒNKW^Ì‹ŒßIÝKˆJNÂˆ[YÙ\‘šY[
-˜[YK[Y[Ý]ÛZ[]\Ëš›Ø‹[Y[Ý]ÛZ[]\È‹KLŒ
-NÂ‚ˆ^XÝØš™XÝ
-ˆ˜[YKœX›\ÚˆÈ™˜YÜˆ‹›Y\™ÙH‹™\ÞH‹œ™[X\ÙH—Kˆš›Ø‹œX›\Ú‹ˆ
-NÂˆYˆ
-ˆ˜[YKœX›\Ú™˜YÜˆOOHYHˆ˜[YKœX›\Ú›Y\™ÙHOOH˜[ÙHˆ˜[YKœX›\Ú™\ÞHOOH˜[ÙHˆ˜[YKœX›\Úœ™[X\ÙHOOH˜[ÙBˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔP“PÐUSÓ—ÒS•SQ‹ˆœšYÙH›ØœÈ]\Ý™H˜Y[Û›H[™Ø[››ÝY\™ÙK\ÞKÜˆ™[X\ÙKˆ‹ˆ
-NÂˆB‚ˆ™]\›ˆØš™XÝ™œ™Y^™JÂˆØÚ[XNˆ˜ÛÙ^XÚ]ÛØØ[ÚKXœšYÙKZ›Ø‹]˜[Y][Û‹ÝŒH‹ˆ˜[YˆYKˆ›Ø’Yˆ˜[YKšYˆYÙ\ÝˆœšYÙQYÙ\Ý
-˜[YJKˆ™\ÜÚ]ÜžNˆ˜[YK\™Ù]œ™\ÜÚ]ÜžKˆ˜\ÙTÚNˆ˜[YK\™Ù]˜˜\ÙWÜÚKˆ\ÚÕ\Nˆ˜[YK\Ú×Ý\Kˆ[ÙNˆ˜[YK›[ÙKˆJNÂŸB‚™^Ü\Þ[˜È[˜Ý[Ûˆ˜[Y]PœšYÙR›Ø‘š[Jš[T]^XÝ][ÛœÊHÂˆ™]\›ˆ˜[Y]PœšYÙR›ØŠˆ]ØZ]™XYœšYÙRœÛÛŠš[T]“Ð—ÓPVÐ–UTË˜œšYÙH›ØˆŠKˆ^XÝ][ÛœËˆ
-NÂŸB‚™^Ü[˜Ý[Ûˆ˜[Y]PœšYÙT™\Ý[
-˜[YK›Ø‹^XÝ][ÛœÊHÂˆ^XÝØš™XÝ
-ˆ^XÝ][ÛœËˆÈšXYÚH‹œ[™\]Y\Ý[X™\ˆ—Kˆœ™\Ý[^XÝ][ÛœÈ‹ˆ
-NÂˆYˆ
-^XÝ][ÛœËšXYÚHOOH[
-HÂˆÝš[™ÑšY[
-^XÝ][ÛœËšXYÚK™^XÝYXYÒH‹ÂˆZ[ŽˆˆX^ˆˆ]\›ŽˆÓÓSRUÔÒKˆJNÂˆBˆYˆ
-^XÝ][ÛœËœ[™\]Y\Ý[X™\ˆOOH[
-HÂˆ[YÙ\‘šY[
-ˆ^XÝ][ÛœËœ[™\]Y\Ý[X™\‹ˆ™^XÝY[™\]Y\Ý[X™\ˆ‹ˆKˆ[X™\‹“PVÔÐQ‘WÒS•QÑT‹ˆ
-NÂˆB‚ˆ^XÝØš™XÝ
-˜[YKÂˆœØÚ[XH‹š›Ø—ÚY‹š›Ø—Ùš[™Ù\œš[‹˜ÛÛ\]YØ]‹œÝ]\È‹ˆ\™Ù]‹œ[Ü™\]Y\Ý‹™\šYšXØ][Ûˆ‹œ™[X\ÙWÜ™XÛÛ[Y[™][Ûˆ‹ˆœØY™]H‹ˆK˜œšYÙH™\Ý[ŠNÂˆYˆ
-˜[YKœØÚ[XHOOH›ØØ[ÚKXœšYÙKÜ™\Ý[ÝŒHŠHÂˆ˜Z[
-“ÐÐSÒWÐ”’QÑWÔÐÒSPWÒS•SQ‹•[œÝ\ÜYœšYÙH™\Ý[ØÚ[XKˆŠNÂˆBˆYˆ
-˜[YKš›Ø—ÚYOOH›Ø‹š›Ø’Y˜[YKš›Ø—Ùš[™Ù\œš[OOH›Ø‹™YÙ\Ý
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ‘TÕSÒ“Ð—ÓRTÓPUÒ‹ˆ”™\Ý[Ù\È›Ýš[™H˜[Y]YœšYÙH›Ø‹ˆ‹ˆ
-NÂˆBˆ]Õ[Y\Ý[\
-˜[YK˜ÛÛ\]YØ]œ™\Ý[˜ÛÛ\]YØ]ŠNÂˆ[[QšY[
-ˆ˜[YKœÝ]\ËˆÈ››ËXXÝ[Ûˆ‹˜›ØÚÙY‹™˜Y\‹[Ü[ˆ‹™˜Z[Y—Kˆœ™\Ý[œÝ]\È‹ˆ
-NÂ‚ˆ^XÝØš™XÝ
-ˆ˜[YK\™Ù]ˆÈœ™\ÜÚ]ÜžH‹˜˜\ÙWÜÚH‹šXYÜÚH—Kˆœ™\Ý[\™Ù]‹ˆ
-NÂˆYˆ
-ˆ˜[YK\™Ù]œ™\ÜÚ]ÜžHOOH›Ø‹œ™\ÜÚ]ÜžHˆ˜[YK\™Ù]˜˜\ÙWÜÚHOOH›Ø‹˜˜\ÙTÚBˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ‘TÕSÕT‘ÑUÓRTÓPUÒ‹ˆ”™\Ý[\™Ù]Ù\È›Ýš[™H˜[Y]YœšYÙH›Ø‹ˆ‹ˆ
-NÂˆBˆYˆ
-˜[YK\™Ù]šXYÜÚHOOH[
-HÂˆÝš[™ÑšY[
-˜[YK\™Ù]šXYÜÚKœ™\Ý[\™Ù]šXYÜÚH‹ÂˆZ[ŽˆˆX^ˆˆ]\›ŽˆÓÓSRUÔÒKˆJNÂˆBˆYˆ
-ˆ^XÝ][ÛœËšXYÚHOOH[	‰‚ˆ˜[YK\™Ù]šXYÜÚHOOH^XÝ][ÛœËšXYÚBˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ‘TÕSÒPQÓRTÓPUÒ‹ˆ”™\Ý[XYÒHY™™\œÈœ›ÛHH[™\[™[HÝ\YYˆXYˆ‹ˆ
-NÂˆB‚ˆYˆ
-˜[YKœ[Ü™\]Y\ÝOOH[
-HÂˆ^XÝØš™XÝ
-ˆ˜[YKœ[Ü™\]Y\ÝˆÈ›[X™\ˆ‹\›‹™˜Y‹›Y\™ÙXXš[]H‹˜ÚWÜÝ]H—Kˆœ™\Ý[œ[Ü™\]Y\Ý‹ˆ
-NÂˆ[YÙ\‘šY[
-ˆ˜[YKœ[Ü™\]Y\Ý›[X™\‹ˆœ™\Ý[œ[Ü™\]Y\Ý›[X™\ˆ‹ˆKˆ[X™\‹“PVÔÐQ‘WÒS•QÑT‹ˆ
-NÂˆÛÛœÝX]ÚHÝš[™ÑšY[
-˜[YKœ[Ü™\]Y\Ý\›œ™\Ý[œ[Ü™\]Y\Ý\›‹ÂˆX^ˆLˆ]\›ŽˆT“ˆJK›X]Ú
-T“
-NÂˆYˆ
-ˆ˜[YKœ[Ü™\]Y\Ý™˜YOOHYHˆ	ÛX]ÚÌW_KÉÛX]ÚÌ—_XOOH›Ø‹œ™\ÜÚ]ÜžHˆ[X™\ŠX]ÚÌ×JHOOH˜[YKœ[Ü™\]Y\Ý›[X™\‚ˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ‘TÕSÔ—ÒS•SQ‹ˆ”™\Ý[[™\]Y\ÝY[]H\È[˜[YÜˆ\È›ÝH˜Yˆ‹ˆ
-NÂˆBˆ[[QšY[
-ˆ˜[YKœ[Ü™\]Y\Ý›Y\™ÙXXš[]KˆÈ›Y\™ÙXX›H‹˜ÛÛ™›XÝ[™È‹[šÛ›ÝÛˆ—Kˆœ™\Ý[œ[Ü™\]Y\Ý›Y\™ÙXXš[]H‹ˆ
-NÂˆ[[QšY[
-ˆ˜[YKœ[Ü™\]Y\Ý˜ÚWÜÝ]KˆÈœ[™[™È‹œÝXØÙ\ÜÈ‹™˜Z[\™H‹[šÛ›ÝÛˆ—Kˆœ™\Ý[œ[Ü™\]Y\Ý˜ÚWÜÝ]H‹ˆ
-NÂˆBˆYˆ
-ˆ˜[YKœÝ]\ÈOOH™˜Y\‹[Ü[ˆˆ	‰‚ˆ
-˜[YKœ[Ü™\]Y\ÝOOH[˜[YK\™Ù]šXYÜÚHOOH[
-Bˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ‘TÕSÔ—ÓRTÔÒS‘È‹ˆ‘˜YTˆ™\Ý[È™\]Z\™Hˆ[™XYTÒH]šY[˜ÙKˆ‹ˆ
-NÂˆBˆYˆ
-˜[YKœÝ]\ÈOOH™˜Y\‹[Ü[ˆˆ	‰ˆ˜[YKœ[Ü™\]Y\ÝOOH[
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ‘TÕSÔ—ÕS‘VPÕQ‹ˆ“Û›H˜Y\‹[Ü[ˆ™\Ý[ÈX^HÛÛZ[ˆH[™\]Y\Ýˆ‹ˆ
-NÂˆBˆYˆ
-ˆ^XÝ][ÛœËœ[™\]Y\Ý[X™\ˆOOH[	‰‚ˆ˜[YKœ[Ü™\]Y\ÝË›[X™\ˆOOH^XÝ][ÛœËœ[™\]Y\Ý[X™\‚ˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ‘TÕSÔ—ÓRTÓPUÒ‹ˆ”™\Ý[[™\]Y\Ý[X™\ˆY™™\œÈœ›ÛHH[™\[™[^XÝ][Û‹ˆ‹ˆ
-NÂˆB‚ˆYˆ
-P\œ˜^Kš\Ð\œ˜^J˜[YK™\šYšXØ][ÛŠH˜[YK™\šYšXØ][Û‹›[™ÝˆÌ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ‘TÕSÕ‘T’Q’PÐUSÓ—ÒS•SQ‹ˆ”™\Ý[™\šYšXØ][Ûˆ]šY[˜ÙH\È[˜[Yˆ‹ˆ
-NÂˆBˆ›Üˆ
-ÛÛœÝÚXÚÈÙˆ˜[YK™\šYšXØ][ÛŠHÂˆ^XÝØš™XÝ
-ÚXÚËÈ›˜[YH‹œÝ]\È‹™]šY[˜ÙH—K™\šYšXØ][ÛˆÚXÚÈŠNÂˆÝš[™ÑšY[
-ÚXÚË›˜[YK™\šYšXØ][Û‹›˜[YH‹ÈX^ˆLŒJNÂˆ[[QšY[
-ˆÚXÚËœÝ]\ËˆÈœÝXØÙ\ÜÈ‹™˜Z[\™H‹œÚÚ\Y‹œ[™[™È—Kˆ™\šYšXØ][Û‹œÝ]\È‹ˆ
-NÂˆÝš[™ÑšY[
-ÚXÚË™]šY[˜ÙK™\šYšXØ][Û‹™]šY[˜ÙH‹ÂˆZ[ŽˆˆX^ˆLˆJNÂˆBˆ[[QšY[
-ˆ˜[YKœ™[X\ÙWÜ™XÛÛ[Y[™][Û‹ˆÈ™Ë[›Ý\™[X\ÙH‹›™YYË[™]Ë[XXË\™]šY]È‹˜›ØÚÙY—Kˆœ™\Ý[œ™[X\ÙWÜ™XÛÛ[Y[™][Ûˆ‹ˆ
-NÂˆYˆ
-ˆ˜[YKœ™[X\ÙWÜ™XÛÛ[Y[™][ÛˆOOH›™YYË[™]Ë[XXË\™]šY]Èˆ	‰‚ˆ˜[YKœÝ]\ÈOOH™˜Y\‹[Ü[ˆ‚ˆ
-HÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ‘TÕSÔ‘PÓÓSQS‘USÓ—ÒS•SQ‹ˆ“Û›HH˜YˆØ[ˆ™\]Y\Ý™]ËSXXÈ™]šY]Ëˆ‹ˆ
-NÂˆB‚ˆ^XÝØš™XÝ
-ˆ˜[YKœØY™]KˆÈ™ÛXZ[Û]]]Y‹›Y\™ÙY‹™\ÞYY‹œ™[X\ÙY‹œ›ÙXÝ[Û—ØXØÙ\ÜÙY—Kˆœ™\Ý[œØY™]H‹ˆ
-NÂˆYˆ
-Øš™XÝ˜[Y\Ê˜[YKœØY™]JKœÛÛYJ
-šY[
-HOˆšY[OOH˜[ÙJJHÂˆ˜Z[
-ˆ“ÐÐSÒWÐ”’QÑWÔ‘TÕSÔÐQ‘UWÒS•SQ‹ˆœšYÙH™\Ý[ÈØ[››ÝÛZ[H[ˆ[œØY™H]]][Û‹ˆ‹ˆ
-NÂˆB‚ˆ™]\›ˆØš™XÝ™œ™Y^™JÂˆØÚ[XNˆ˜ÛÙ^XÚ]ÛØØ[ÚKXœšYÙK\™\Ý[]˜[Y][Û‹ÝŒH‹ˆ˜[YˆYKˆ›Ø’Yˆ›Ø‹š›Ø’Yˆ›Ø‘YÙ\Ýˆ›Ø‹™YÙ\Ýˆ™\Ý[YÙ\ÝˆœšYÙQYÙ\Ý
-˜[YJKˆ™\ÜÚ]ÜžNˆ˜[YK\™Ù]œ™\ÜÚ]ÜžKˆ˜\ÙTÚNˆ˜[YK\™Ù]˜˜\ÙWÜÚKˆXYÚNˆ˜[YK\™Ù]šXYÜÚKˆ[™\]Y\Ý[X™\Žˆ˜[YKœ[Ü™\]Y\ÝË›[X™\ˆÏÈ[ˆÚTÝ]Nˆ˜[YKœ[Ü™\]Y\ÝË˜ÚWÜÝ]HÏÈ[ˆ™[X\ÙT™XÛÛ[Y[™][ÛŽˆ˜[YKœ™[X\ÙWÜ™XÛÛ[Y[™][Û‹ˆXÝ[Û]]Üš^™Yˆ˜[ÙKˆY\™ÙP]]Üš^™Yˆ˜[ÙKˆ\Þ[Y[]]Üš^™Yˆ˜[ÙKˆ™[X\ÙP]]Üš^™Yˆ˜[ÙKˆJNÂŸB‚™^Ü\Þ[˜È[˜Ý[Ûˆ˜[Y]PœšYÙT™\Ý[š[Jˆ™\Ý[]ˆ˜[Y]Y›Ø‹ˆ^XÝ][ÛœËŠHÂˆ™]\›ˆ˜[Y]PœšYÙT™\Ý[
-ˆ]ØZ]™XYœšYÙRœÛÛŠ™\Ý[]‘TÕSÓPVÐ–UTË˜œšYÙH™\Ý[ŠKˆ˜[Y]Y›Ø‹ˆ^XÝ][ÛœËˆ
-NÂŸB
+function validateAllowedPathValue(value) {
+  stringField(value, "allowed path", { max: 240, pattern: PATH_PATTERN });
+  if (value === "**" || value === "*" || value === "*/**") {
+    fail("LOCALCI_BRIDGE_PATH_INVALID", "Catch-all allowed paths are forbidden.");
+  }
+  const normalized = path.posix.normalize(value);
+  if (normalized !== value || normalized === "." || normalized.startsWith("../") || value.includes("**/**")) {
+    fail("LOCALCI_BRIDGE_PATH_INVALID", `Allowed path is not canonical: ${value}`);
+  }
+  if (FORBIDDEN_PATHS.some((prefix) => value === prefix.replace(/\/$/u, "") || value.startsWith(prefix))) {
+    fail("LOCALCI_BRIDGE_PATH_INVALID", `Allowed path overlaps a protected area: ${value}`);
+  }
+}
+
+export function validateBridgeJob(value, expectations) {
+  exactObject(value, [
+    "schema", "id", "created_at", "source", "target", "task_type", "mode",
+    "priority", "instructions", "acceptance_criteria", "allowed_paths",
+    "verification_profile", "timeout_minutes", "publish",
+  ], "job");
+  if (value.schema !== "localci-bridge/job/v1") {
+    fail("LOCALCI_BRIDGE_SCHEMA_INVALID", "Unsupported job schema.");
+  }
+  stringField(value.id, "job.id", { min: 8, max: 80, pattern: JOB_ID });
+  utcTimestamp(value.created_at, "job.created_at");
+
+  exactObject(value.source, [
+    "kind", "fingerprint", "subject", "sender_alias", "received_at", "summary",
+  ], "job.source");
+  stringField(value.source.fingerprint, "source.fingerprint", { min: 64, max: 64, pattern: SHA256 });
+  for (const [label, text] of [
+    ["subject", value.source.subject],
+    ["sender alias", value.source.sender_alias],
+    ["summary", value.source.summary],
+  ]) {
+    rejectSensitiveText(text, `source ${label}`, { source: true });
+  }
+  if (bridgeSourceFingerprint({
+    kind: value.source.kind,
+    subject: value.source.subject,
+    sender_alias: value.source.sender_alias,
+    received_at: value.source.received_at,
+    summary: value.source.summary,
+  }) !== value.source.fingerprint) {
+    fail(
+      "LOCALCI_BRIDGE_FINGERPRINT_MISMATCH",
+      "source.fingerprint does not equal the fingerprint recomputed from normalized source fields.",
+    );
+  }
+
+  exactObject(value.target, ["repository", "base_sha", "default_branch"], "job.target");
+  stringField(value.target.repository, "target.repository", { max: 200, pattern: REPOSITORY });
+  stringField(value.target.base_sha, "target.base_sha", { min: 40, max: 40, pattern: COMMIT_SHA });
+  stringField(value.target.default_branch, "target.default_branch", { max: 100, pattern: BRANCH });
+  if (value.target.repository !== expectations.repository) {
+    fail("LOCALCI_BRIDGE_TARGET_MISMATCH", "Job target repository differs from the independently supplied repository.");
+  }
+  if (value.target.base_sha !== expectations.baseSha) {
+    fail("LOCALCI_BRIDGE_TARGET_MISMATCH", "Job base SHA differs from the independently supplied base SHA.");
+  }
+  if (value.target.default_branch !== expectations.defaultBranch) {
+    fail("LOCALCI_BRIDGE_TARGET_MISMATCH", "Job default branch differs from the independently supplied branch.");
+  }
+
+  enumField(value.task_type, ["triage-report", "draft-pr"], "job.task_type");
+  enumField(value.mode, ["read-only", "workspace-write"], "job.mode");
+  if (value.task_type === "triage-report" && value.mode !== "read-only") {
+    fail("LOCALCI_BRIDGE_MODE_INVALID", "Triage reports must be read-only.");
+  }
+  if (value.task_type === "draft-pr" && value.mode !== "workspace-write") {
+    fail("LOCALCI_BRIDGE_MODE_INVALID", "Draft PR jobs require workspace-write mode.");
+  }
+  enumField(value.priority, ["regression", "security", "bug", "performance", "feature", "documentation"], "job.priority");
+
+  stringField(value.instructions, "job.instructions", { max: 12000 });
+  rejectSensitiveText(value.instructions, "instructions");
+
+  if (!Array.isArray(value.acceptance_criteria) || value.acceptance_criteria.length < 1 || value.acceptance_criteria.length > 30) {
+    fail("LOCALCI_BRIDGE_ACCEPTANCE_INVALID", "acceptance_criteria must be a bounded non-empty array.");
+  }
+  for (const item of value.acceptance_criteria) {
+    stringField(item, "acceptance criterion", { max: 1000 });
+    rejectSensitiveText(item, "acceptance criterion");
+  }
+
+  if (!Array.isArray(value.allowed_paths) || value.allowed_paths.length > 40) {
+    fail("LOCALCI_BRIDGE_PATH_INVALID", "allowed_paths is invalid.");
+  }
+  if (new Set(value.allowed_paths).size !== value.allowed_paths.length) {
+    fail("LOCALCI_BRIDGE_PATH_INVALID", "allowed_paths must be unique.");
+  }
+  for (const item of value.allowed_paths) validateAllowedPathValue(item);
+  if (value.task_type === "draft-pr" && value.allowed_paths.length < 1) {
+    fail("LOCALCI_BRIDGE_PATH_INVALID", "Draft PR jobs require at least one allowed path.");
+  }
+  if (value.task_type === "triage-report" && value.allowed_paths.length !== 0) {
+    fail("LOCALCI_BRIDGE_PATH_INVALID", "Read-only triage jobs cannot allow file changes.");
+  }
+
+  stringField(value.verification_profile, "job.verification_profile", { min: 3, max: 64, pattern: /^[a-z][a-z0-9-]+$/u });
+  integerField(value.timeout_minutes, "job.timeout_minutes", 5, 120);
+
+  exactObject(value.publish, ["target_draft_pr", "merge", "deploy", "release"], "job.publish");
+  for (const key of ["merge", "deploy", "release"]) {
+    if (value.publish[key] !== false) {
+      fail("LOCALCI_BRIDGE_PUBLICATION_INVALID", `publish.${key} must be false; the bridge never grants merge, deploy, or release authority.`);
+    }
+  }
+  const expectedDraftPr = value.task_type === "draft-pr";
+  if (value.publish.target_draft_pr !== expectedDraftPr) {
+    fail(
+      "LOCALCI_BRIDGE_PUBLICATION_INVALID",
+      `publish.target_draft_pr must be ${expectedDraftPr} for ${value.task_type} jobs; read-only triage never implies a target code PR.`,
+    );
+  }
+
+  return Object.freeze({
+    valid: true,
+    jobId: value.id,
+    digest: bridgeDigest(value),
+    job: value,
+  });
+}
+
+export async function validateBridgeJobFile(filePath, expectations) {
+  return validateBridgeJob(
+    await readBridgeJson(filePath, JOB_MAX_BYTES, "job"),
+    expectations,
+  );
+}
+
+export function validateBridgeResult(value, job, identity = {}) {
+  const { headSha = null, pullRequestNumber = null } = identity;
+  exactObject(value, [
+    "schema", "job_id", "job_fingerprint", "completed_at", "status", "target",
+    "pull_request", "verification", "release_recommendation", "safety",
+  ], "result");
+  if (value.schema !== "localci-bridge/result/v1") {
+    fail("LOCALCI_BRIDGE_SCHEMA_INVALID", "Unsupported result schema.");
+  }
+  if (value.job_id !== job.job.id) {
+    fail("LOCALCI_BRIDGE_RESULT_JOB_MISMATCH", "Result job ID does not match the job.");
+  }
+  if (value.job_fingerprint !== job.digest) {
+    fail("LOCALCI_BRIDGE_RESULT_DIGEST_MISMATCH", "Result job fingerprint does not match the job.");
+  }
+  utcTimestamp(value.completed_at, "result.completed_at");
+  enumField(value.status, ["no-action", "blocked", "draft-pr-open", "failed"], "result.status");
+
+  exactObject(value.target, ["repository", "base_sha", "head_sha"], "result.target");
+  if (value.target.repository !== job.job.target.repository || value.target.base_sha !== job.job.target.base_sha) {
+    fail("LOCALCI_BRIDGE_RESULT_TARGET_MISMATCH", "Result target does not match the job.");
+  }
+  if (value.target.head_sha !== null) {
+    stringField(value.target.head_sha, "result.target.head_sha", { min: 40, max: 40, pattern: COMMIT_SHA });
+  }
+
+  if (value.pull_request !== null) {
+    if (job.job.task_type !== "draft-pr") {
+      fail(
+        "LOCALCI_BRIDGE_RESULT_PR_INVALID",
+        "Only draft-pr jobs may report a target pull request; read-only triage publishes a report, not a code PR.",
+      );
+    }
+    exactObject(value.pull_request, ["number", "url", "draft", "mergeability", "ci_state"], "result.pull_request");
+    integerField(value.pull_request.number, "pull_request.number", 1, Number.MAX_SAFE_INTEGER);
+    const match = URL.exec(value.pull_request.url);
+    if (match === null || `${match[1]}/${match[2]}` !== job.job.target.repository || Number(match[3]) !== value.pull_request.number) {
+      fail(
+        "LOCALCI_BRIDGE_RESULT_URL_MISMATCH",
+        `pull_request.url must be exactly https://github.com/${job.job.target.repository}/pull/${value.pull_request.number}.`,
+      );
+    }
+    if (value.pull_request.draft !== true) {
+      fail("LOCALCI_BRIDGE_RESULT_PR_INVALID", "pull_request.draft must be true; results may only report draft PRs.");
+    }
+    enumField(value.pull_request.mergeability, ["mergeable", "conflicting", "unknown"], "pull_request.mergeability");
+    enumField(value.pull_request.ci_state, ["pending", "success", "failure", "unknown"], "pull_request.ci_state");
+  }
+  if (value.status === "draft-pr-open" && (value.pull_request === null || value.target.head_sha === null)) {
+    fail("LOCALCI_BRIDGE_RESULT_PR_INVALID", "Draft PR results require PR and head SHA evidence.");
+  }
+  if (value.status !== "draft-pr-open" && value.pull_request !== null) {
+    fail("LOCALCI_BRIDGE_RESULT_PR_INVALID", "Only draft-pr-open results may contain a pull request.");
+  }
+  if (headSha !== null && value.target.head_sha !== null && value.target.head_sha !== headSha) {
+    fail(
+      "LOCALCI_BRIDGE_RESULT_HEAD_MISMATCH",
+      "Result head SHA differs from the independently supplied current head SHA.",
+    );
+  }
+  if (pullRequestNumber !== null && value.pull_request !== null && value.pull_request.number !== pullRequestNumber) {
+    fail(
+      "LOCALCI_BRIDGE_RESULT_PR_MISMATCH",
+      "Result PR number differs from the independently supplied PR number.",
+    );
+  }
+
+  if (!Array.isArray(value.verification) || value.verification.length > 30) {
+    fail("LOCALCI_BRIDGE_VERIFICATION_INVALID", "Verification evidence is invalid.");
+  }
+  for (const check of value.verification) {
+    exactObject(check, [
+      "name", "status", "evidence", "github_run_id", "github_job_id",
+      "runner_name", "artifact_sha256",
+    ], "verification check");
+    stringField(check.name, "verification.name", { max: 120 });
+    enumField(check.status, ["success", "failure", "skipped", "pending"], "verification.status");
+    stringField(check.evidence, "verification.evidence", { min: 0, max: 1000 });
+    for (const [key, id] of [["github_run_id", check.github_run_id], ["github_job_id", check.github_job_id]]) {
+      if (id !== null) integerField(id, `verification.${key}`, 1, Number.MAX_SAFE_INTEGER);
+    }
+    if (check.runner_name !== null) stringField(check.runner_name, "verification.runner_name", { max: 120, pattern: RUNNER_NAME });
+    if (check.artifact_sha256 !== null) stringField(check.artifact_sha256, "verification.artifact_sha256", { min: 64, max: 64, pattern: SHA256 });
+    if (check.status === "success") {
+      const codexLane = typeof check.runner_name === "string" && check.runner_name.startsWith("codex");
+      if (codexLane) {
+        if (check.artifact_sha256 === null) {
+          fail("LOCALCI_BRIDGE_VERIFICATION_INVALID", "Successful codex-lane evidence must include the report artifact digest.");
+        }
+      } else {
+        if (check.github_run_id === null || check.runner_name === null) {
+          fail("LOCALCI_BRIDGE_VERIFICATION_INVALID", "Successful verification evidence must bind the GitHub workflow run and runner identity.");
+        }
+        if (check.github_job_id === null && check.artifact_sha256 === null) {
+          fail("LOCALCI_BRIDGE_VERIFICATION_INVALID", "Successful verification evidence must include the GitHub job id or an artifact digest.");
+        }
+      }
+    }
+  }
+
+  enumField(value.release_recommendation, ["do-not-release", "needs-new-mac-review", "blocked"], "release_recommendation");
+  if (value.release_recommendation === "needs-new-mac-review" && value.status !== "draft-pr-open") {
+    fail("LOCALCI_BRIDGE_RECOMMENDATION_INVALID", "Only a draft PR can request new-Mac review.");
+  }
+
+  exactObject(value.safety, ["gmail_mutated", "merged", "deployed", "released", "production_accessed"], "result.safety");
+  for (const [key, field] of Object.entries(value.safety)) {
+    booleanField(field, false, `result.safety.${key}`);
+  }
+
+  return Object.freeze({
+    valid: true,
+    jobId: value.job_id,
+    pullRequestNumber: value.pull_request === null ? null : value.pull_request.number,
+    actionAuthorized: false,
+    mergeAuthorized: false,
+    releaseAuthorized: false,
+    result: value,
+  });
+}
+
+export async function validateBridgeResultFile(filePath, job, identity) {
+  return validateBridgeResult(
+    await readBridgeJson(filePath, RESULT_MAX_BYTES, "result"),
+    job,
+    identity,
+  );
+}

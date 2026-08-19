@@ -4,9 +4,9 @@
   "created_at": "2026-08-19T00:40:00.000Z",
   "source": {
     "kind": "gmail",
-    "fingerprint": "970c2d3bb0df5aca50335c6308ea58b5b1864e2a59b4ae5976d89a679b38afc6",
+    "fingerprint": "1b486bba7bc88659f9509dfc9b16d21989b13be8720f2b0428890606dce06bf3",
     "subject": "RTR small bug: shift filter resets",
-    "sender": "MSS Security product team",
+    "sender_alias": "mss security product team",
     "received_at": "2026-08-19T00:30:00.000Z",
     "summary": "The selected shift filter resets after returning from shift details. Preserve the existing filter for the current browser session."
   },
@@ -28,10 +28,10 @@
     "src/resources/js/Pages/Shifts/**",
     "src/tests/**"
   ],
-  "verification_profile": "peoplanner-quality",
+  "verification_profile": "peopleplanner-quality",
   "timeout_minutes": 90,
   "publish": {
-    "draft_pr": true,
+    "target_draft_pr": true,
     "merge": false,
     "deploy": false,
     "release": false

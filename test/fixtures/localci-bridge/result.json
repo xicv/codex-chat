@@ -1,7 +1,7 @@
 {
   "schema": "localci-bridge/result/v1",
   "job_id": "pp-20260819-shift-filter",
-  "job_fingerprint": "bca738bcd1fef9a60f88c4dee47d973b5324fa877bfdb56dbb26973a1242472f",
+  "job_fingerprint": "a4e63ea353630df6e1a5a6dda94ce3836574ec69ac2187350eab6f7bf288ca97",
   "completed_at": "2026-08-19T02:30:00.000Z",
   "status": "draft-pr-open",
   "target": {
@@ -20,12 +20,20 @@
     {
       "name": "focused regression",
       "status": "success",
-      "evidence": "Local focused test passed on the reported head SHA."
+      "evidence": "Focused test passed on the reported head SHA.",
+      "github_run_id": 9876543210,
+      "github_job_id": 98765432101,
+      "runner_name": "mac-local-ci-pp-e2e",
+      "artifact_sha256": "5a674c1d1f8d2a59a5c3c1a0e1d2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0"
     },
     {
       "name": "PeoplePlanner quality",
       "status": "pending",
-      "evidence": "Exact-head LocalCI workflow is pending."
+      "evidence": "Exact-head LocalCI workflow is pending.",
+      "github_run_id": null,
+      "github_job_id": null,
+      "runner_name": null,
+      "artifact_sha256": null
     }
   ],
   "release_recommendation": "needs-new-mac-review",

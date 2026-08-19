@@ -7,6 +7,16 @@ transport and it does not grant Codex authority to execute, merge, deploy, or
 release. The adapter in this skill independently validates a bridge job or
 result before Codex uses it as a review handoff.
 
+## Authoritative contract
+
+The authoritative schema lives in the private `xicv/localci-bridge`
+repository. The schema copies in `references/schemas/` are vendored for
+reference and pinned by `references/schemas/localci-bridge-authority.json`
+(authoritative repository, commit SHA, and per-file SHA-256 digests);
+`test/unit/localci-bridge-schema-authority.test.mjs` fails on any divergence.
+Re-validate a job or result only against handoffs produced by the pinned
+contract revision.
+
 ## Validate a job
 
 Supply the repository and complete base SHA from an independent GitHub query,

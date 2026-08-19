@@ -29,7 +29,7 @@ test("validates the exact PeoplePlanner bridge job and canonical digest", async 
   assert.equal(result.jobId, "pp-20260819-shift-filter");
   assert.equal(
     result.digest,
-    "bca738bcd1fef9a60f88c4dee47d973b5324fa877bfdb56dbb26973a1242472f",
+    "a4e63ea353630df6e1a5a6dda94ce3836574ec69ac2187350eab6f7bf288ca97",
   );
 });
 

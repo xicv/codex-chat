@@ -21,7 +21,8 @@
   ],
   "type": "module",
   "bin": {
-    "codex-chat": "./.agents/skills/codex-chat/scripts/codex-chat.mjs"
+    "codex-chat": "./.agents/skills/codex-chat/scripts/codex-chat.mjs",
+    "codex-chat-localci-bridge": "./.agents/skills/codex-chat/scripts/localci-bridge.mjs"
   },
   "scripts": {
     "sync:local": "node scripts/sync-local-install.mjs",

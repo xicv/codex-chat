@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xicv/localci-bridge/schemas/result-v1.schema.json",
+  "title": "LocalCI Bridge result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "job_id", "job_fingerprint", "completed_at", "status",
+    "target", "pull_request", "verification", "release_recommendation",
+    "safety"
+  ],
+  "properties": {
+    "schema": {"const": "localci-bridge/result/v1"},
+    "job_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{7,79}$"},
+    "job_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "completed_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["no-action", "blocked", "draft-pr-open", "failed"]},
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "base_sha", "head_sha"],
+      "properties": {
+        "repository": {"type": "string"},
+        "base_sha": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "head_sha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{40}$"}
+      }
+    },
+    "pull_request": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["number", "url", "draft", "mergeability", "ci_state"],
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "url": {"type": "string", "pattern": "^https://github\\.com/"},
+        "draft": {"const": true},
+        "mergeability": {"enum": ["mergeable", "conflicting", "unknown"]},
+        "ci_state": {"enum": ["pending", "success", "failure", "unknown"]}
+      }
+    },
+    "verification": {
+      "type": "array", "maxItems": 30,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "status", "evidence"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 120},
+          "status": {"enum": ["success", "failure", "skipped", "pending"]},
+          "evidence": {"type": "string", "maxLength": 1000}
+        }
+      }
+    },
+    "release_recommendation": {"enum": ["do-not-release", "needs-new-mac-review", "blocked"]},
+    "safety": {
+      "type": "object", "additionalProperties": false,
+      "required": ["gmail_mutated", "merged", "deployed", "released", "production_accessed"],
+      "properties": {
+        "gmail_mutated": {"const": false},
+        "merged": {"const": false},
+        "deployed": {"const": false},
+        "released": {"const": false},
+        "production_accessed": {"const": false}
+      }
+    }
+  }
+}

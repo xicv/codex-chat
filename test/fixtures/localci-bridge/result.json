@@ -1,0 +1,39 @@
+{
+  "schema": "localci-bridge/result/v1",
+  "job_id": "pp-20260819-shift-filter",
+  "job_fingerprint": "bca738bcd1fef9a60f88c4dee47d973b5324fa877bfdb56dbb26973a1242472f",
+  "completed_at": "2026-08-19T02:30:00.000Z",
+  "status": "draft-pr-open",
+  "target": {
+    "repository": "xicv/PeoplePlanner",
+    "base_sha": "d9fe027113486bc31d311d7c7dfffea4749bced4",
+    "head_sha": "1111111111111111111111111111111111111111"
+  },
+  "pull_request": {
+    "number": 123,
+    "url": "https://github.com/xicv/PeoplePlanner/pull/123",
+    "draft": true,
+    "mergeability": "unknown",
+    "ci_state": "pending"
+  },
+  "verification": [
+    {
+      "name": "focused regression",
+      "status": "success",
+      "evidence": "Local focused test passed on the reported head SHA."
+    },
+    {
+      "name": "PeoplePlanner quality",
+      "status": "pending",
+      "evidence": "Exact-head LocalCI workflow is pending."
+    }
+  ],
+  "release_recommendation": "needs-new-mac-review",
+  "safety": {
+    "gmail_mutated": false,
+    "merged": false,
+    "deployed": false,
+    "released": false,
+    "production_accessed": false
+  }
+}

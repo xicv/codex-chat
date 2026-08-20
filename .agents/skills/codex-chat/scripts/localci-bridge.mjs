@@ -121,9 +121,12 @@ async function main() {
         pullRequestNumber: parsePrNumber(invocation.options["pr-number"]),
       },
     );
-    // Exact comparison against independently supplied values.
+    // Exact comparison against independently supplied values. The request PR
+    // number uses the same strict positive-safe-integer parsing as
+    // --pr-number: "12junk", 0, negative, and unsafe-integer values are
+    // rejected outright instead of silently coercing.
     const expectedRequest = {
-      pr_number: Number.parseInt(invocation.options["request-pr-number"], 10),
+      pr_number: parsePrNumber(invocation.options["request-pr-number"]),
       head_sha: invocation.options["request-head-sha"],
       request_file_sha256: invocation.options["request-file-sha256"],
     };

@@ -59,6 +59,28 @@ test("result-validate requires all six independent binding values", async () => 
   assert.match(result.output.error.message, /request-pr-number|Missing/u);
 });
 
+test("result-validate rejects malformed --request-pr-number values", async () => {
+  const base = [
+    "result-validate",
+    "--job", "test/fixtures/localci-bridge/job.json",
+    "--result", "test/fixtures/localci-bridge/result.json",
+    "--repository", "xicv/PeoplePlanner",
+    "--base-sha", baseSha,
+    "--head-sha", "1".repeat(40),
+    "--pr-number", "123",
+    "--request-head-sha", "1".repeat(40),
+    "--request-file-sha256", "2".repeat(64),
+    "--bridge-main-sha", "a".repeat(40),
+    "--config-blob-sha", "b".repeat(40),
+    "--request-blob-sha", "c".repeat(40),
+  ];
+  for (const bad of ["12junk", "0", "-3", "9007199254740993", "3.5", ""]) {
+    const result = await run([...base, "--request-pr-number", bad]);
+    assert.notEqual(result.code, 0, `--request-pr-number ${JSON.stringify(bad)} must be rejected`);
+    assert.match(result.output.error.message, /positive integer|too large/u);
+  }
+});
+
 test("result-validate compares independent bindings exactly", async () => {
   const resultValue = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "result.json"), "utf8"));
   const requestBinding = resultValue.request_binding;

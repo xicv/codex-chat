@@ -22,6 +22,11 @@
     "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "request_file_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
+  "bridge_binding": {
+    "main_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "config_blob_sha": "dddddddddddddddddddddddddddddddddddddddd",
+    "request_blob_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
   "verification": [
     {
       "name": "focused regression",

@@ -406,8 +406,8 @@ export function validateBridgeResult(value, job, identity = {}) {
   const { headSha = null, pullRequestNumber = null } = identity;
   exactObject(value, [
     "schema", "job_id", "job_fingerprint", "completed_at", "status", "target",
-    "pull_request", "triage_report", "request_binding", "verification",
-    "release_recommendation", "safety",
+    "pull_request", "triage_report", "request_binding", "bridge_binding",
+    "verification", "release_recommendation", "safety",
   ], "result");
   if (value.schema !== "localci-bridge/result/v1") {
     fail("LOCALCI_BRIDGE_SCHEMA_INVALID", "Unsupported result schema.");
@@ -465,6 +465,12 @@ export function validateBridgeResult(value, job, identity = {}) {
   integerField(value.request_binding.pr_number, "request_binding.pr_number", 1, Number.MAX_SAFE_INTEGER);
   stringField(value.request_binding.head_sha, "request_binding.head_sha", { min: 40, max: 40, pattern: /^[a-f0-9]{40}$/u });
   stringField(value.request_binding.request_file_sha256, "request_binding.request_file_sha256", { min: 64, max: 64, pattern: /^[a-f0-9]{64}$/u });
+  // Bridge binding: the run's immutable control-plane identity — the exact
+  // bridge main commit plus the config and request blob SHAs.
+  exactObject(value.bridge_binding, ["main_sha", "config_blob_sha", "request_blob_sha"], "result.bridge_binding");
+  for (const [key, sha] of [["main_sha", value.bridge_binding.main_sha], ["config_blob_sha", value.bridge_binding.config_blob_sha], ["request_blob_sha", value.bridge_binding.request_blob_sha]]) {
+    stringField(sha, `bridge_binding.${key}`, { min: 40, max: 40, pattern: /^[a-f0-9]{40}$/u });
+  }
   if (value.status === "triage-completed") {
     if (job.job.task_type !== "triage-report") {
       fail("LOCALCI_BRIDGE_TRIAGE_INVALID", "Only read-only triage jobs may carry a triage_report.");

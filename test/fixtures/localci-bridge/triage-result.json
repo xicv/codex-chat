@@ -29,9 +29,14 @@
     "notes": "A follow-up draft-PR job can batch the shift lookup; bounded to the export path with a regression test on export timing."
   },
   "request_binding": {
-    "pr_number": 7,
+    "pr_number": 3,
     "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "request_file_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    "request_file_sha256": "ebe9e456fb90abd0454f62861ec48a4705756840c21593f43d973fbd2d07bf7c"
+  },
+  "bridge_binding": {
+    "main_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "config_blob_sha": "dddddddddddddddddddddddddddddddddddddddd",
+    "request_blob_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
   },
   "verification": [
     {

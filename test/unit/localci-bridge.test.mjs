@@ -219,3 +219,32 @@ test("results carry the merged request binding and reject bad bindings", async (
   extra.request_binding.surprise = true;
   assert.throws(() => validateBridgeResult(extra, triageJob, {}), { code: "LOCALCI_BRIDGE_KEYS_INVALID" });
 });
+
+test("results carry a strict bridge_binding and reject bad ones", async () => {
+  const triageJobPath = path.join(root, "test", "fixtures", "localci-bridge", "triage-job.json");
+  const triageResultPath = path.join(root, "test", "fixtures", "localci-bridge", "triage-result.json");
+  const triageExpectations = {
+    repository: "xicv/PeoplePlanner",
+    baseSha: "d9fe027113486bc31d311d7c7dfffea4749bced4",
+    defaultBranch: "main",
+  };
+  const triageJob = await validateBridgeJobFile(triageJobPath, triageExpectations);
+  const value = await json(triageResultPath);
+  const checked = validateBridgeResult(value, triageJob, {});
+  assert.equal(checked.valid, true);
+  for (const key of ["main_sha", "config_blob_sha", "request_blob_sha"]) {
+    assert.match(checked.result.bridge_binding[key], /^[0-9a-f]{40}$/u);
+  }
+
+  const missing = JSON.parse(JSON.stringify(value));
+  delete missing.bridge_binding;
+  assert.throws(() => validateBridgeResult(missing, triageJob, {}), { code: "LOCALCI_BRIDGE_KEYS_INVALID" });
+
+  const malformed = JSON.parse(JSON.stringify(value));
+  malformed.bridge_binding.main_sha = "short";
+  assert.throws(() => validateBridgeResult(malformed, triageJob, {}), { code: "LOCALCI_BRIDGE_STRING_INVALID" });
+
+  const extra = JSON.parse(JSON.stringify(value));
+  extra.bridge_binding.surprise = true;
+  assert.throws(() => validateBridgeResult(extra, triageJob, {}), { code: "LOCALCI_BRIDGE_KEYS_INVALID" });
+});

@@ -149,3 +149,55 @@ test("unknown commands fail closed", async () => {
   assert.equal(result.output.ok, false);
   assert.equal(result.output.error.code, "UNKNOWN_COMMAND");
 });
+
+test("a one-character job id fails codex-chat validation and the vendored schema", async () => {
+  const { validateBridgeJob } = await import("../../.agents/skills/codex-chat/scripts/lib/localci-bridge.mjs");
+  const job = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "job.json"), "utf8"));
+  job.id = "x";
+  assert.throws(
+    () => validateBridgeJob(job, { repository: "xicv/PeoplePlanner", baseSha, defaultBranch: "main" }),
+    { code: "LOCALCI_BRIDGE_STRING_INVALID" },
+  );
+  // JSON Schema (draft-2020-12 minLength) via the reference validator walk:
+  // the schema's own constraints must reject it too.
+  const schema = JSON.parse(await readFile(path.join(root, ".agents", "skills", "codex-chat", "references", "schemas", "localci-bridge-job-v1.schema.json"), "utf8"));
+  assert.equal(schema.properties.id.minLength, 8);
+  assert.equal(schema.properties.id.maxLength, 80);
+  assert.ok(job.id.length < schema.properties.id.minLength, "fixture must be shorter than the schema minimum");
+});
+
+test("result-validate requires the trusted-derived source fingerprint", async () => {
+  const resultValue = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "triage-result.json"), "utf8"));
+  const requestBinding = resultValue.request_binding;
+  const bridgeBinding = resultValue.bridge_binding;
+  const base = [
+    "result-validate",
+    "--job", "test/fixtures/localci-bridge/triage-job.json",
+    "--result", "test/fixtures/localci-bridge/triage-result.json",
+    "--repository", "xicv/PeoplePlanner",
+    "--base-sha", baseSha,
+    "--head-sha", "1".repeat(40),
+    "--pr-number", "123",
+    "--request-pr-number", String(requestBinding.pr_number),
+    "--request-head-sha", requestBinding.head_sha,
+    "--request-file-sha256", requestBinding.request_file_sha256,
+    "--bridge-main-sha", bridgeBinding.main_sha,
+    "--config-blob-sha", bridgeBinding.config_blob_sha,
+    "--request-blob-sha", bridgeBinding.request_blob_sha,
+  ];
+  const good = await run(base);
+  assert.equal(good.code, 0, good.stderr);
+
+  // A tampered source_fingerprint must be rejected: it must equal the
+  // fingerprint recomputed independently from the supplied job source.
+  const { mkdtemp, writeFile: wf } = await import("node:fs/promises");
+  const osMod = await import("node:os");
+  const directory = await mkdtemp(path.join(osMod.tmpdir(), "ccsf-"));
+  const tampered = JSON.parse(JSON.stringify(resultValue));
+  tampered.source_fingerprint = "0".repeat(64);
+  const tamperedPath = path.join(directory, "tampered-result.json");
+  await wf(tamperedPath, JSON.stringify(tampered, null, 2) + "\n");
+  const bad = await run(base.map((arg, index) => (index === 4 ? tamperedPath : arg)));
+  assert.notEqual(bad.code, 0);
+  assert.match(bad.output.error.code ?? bad.output.error.message, /SOURCE_FINGERPRINT/u);
+});

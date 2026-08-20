@@ -237,12 +237,13 @@ export function bridgeSourceFingerprint(source) {
   stringField(source.sender_alias, "source.sender_alias", { min: 2, max: 64, pattern: SENDER_ALIAS });
   utcTimestamp(source.received_at, "source.received_at");
   stringField(source.summary, "source.summary", { max: 3000 });
+  // The generated summary is excluded, exactly like the trusted bridge
+  // validator: paraphrases of one source share one fingerprint.
   const normalized = {
     kind: source.kind.trim().toLowerCase(),
     subject: source.subject.trim().replace(/\s+/gu, " ").toLowerCase(),
     sender_alias: source.sender_alias.trim().replace(/\s+/gu, " ").toLowerCase(),
     received_at: source.received_at,
-    summary: source.summary.trim().replace(/\s+/gu, " "),
   };
   return createHash("sha256").update(canonicalBridgeJson(normalized)).digest("hex");
 }
@@ -298,9 +299,8 @@ export function validateBridgeJob(value, expectations) {
   utcTimestamp(value.created_at, "job.created_at");
 
   exactObject(value.source, [
-    "kind", "fingerprint", "subject", "sender_alias", "received_at", "summary",
+    "kind", "subject", "sender_alias", "received_at", "summary",
   ], "job.source");
-  stringField(value.source.fingerprint, "source.fingerprint", { min: 64, max: 64, pattern: SHA256 });
   for (const [label, text] of [
     ["subject", value.source.subject],
     ["sender alias", value.source.sender_alias],
@@ -308,18 +308,11 @@ export function validateBridgeJob(value, expectations) {
   ]) {
     rejectSensitiveText(text, `source ${label}`, { source: true });
   }
-  if (bridgeSourceFingerprint({
-    kind: value.source.kind,
-    subject: value.source.subject,
-    sender_alias: value.source.sender_alias,
-    received_at: value.source.received_at,
-    summary: value.source.summary,
-  }) !== value.source.fingerprint) {
-    fail(
-      "LOCALCI_BRIDGE_FINGERPRINT_MISMATCH",
-      "source.fingerprint does not equal the fingerprint recomputed from normalized source fields.",
-    );
-  }
+  // Trusted-derived: the reviewer-side validator computes the fingerprint
+  // independently from the supplied sanitized job source, exactly like the
+  // bridge validator. A caller-supplied fingerprint is not part of the
+  // contract (passing one is a schema error via exactObject above).
+  const sourceFingerprint = bridgeSourceFingerprint(value.source);
 
   exactObject(value.target, ["repository", "base_sha", "default_branch"], "job.target");
   stringField(value.target.repository, "target.repository", { max: 200, pattern: REPOSITORY });
@@ -391,6 +384,7 @@ export function validateBridgeJob(value, expectations) {
     valid: true,
     jobId: value.id,
     digest: bridgeDigest(value),
+    sourceFingerprint,
     job: value,
   });
 }
@@ -405,7 +399,7 @@ export async function validateBridgeJobFile(filePath, expectations) {
 export function validateBridgeResult(value, job, identity = {}) {
   const { headSha = null, pullRequestNumber = null } = identity;
   exactObject(value, [
-    "schema", "job_id", "job_fingerprint", "completed_at", "status", "target",
+    "schema", "job_id", "job_fingerprint", "source_fingerprint", "completed_at", "status", "target",
     "pull_request", "triage_report", "request_binding", "bridge_binding",
     "verification", "release_recommendation", "safety",
   ], "result");
@@ -417,6 +411,13 @@ export function validateBridgeResult(value, job, identity = {}) {
   }
   if (value.job_fingerprint !== job.digest) {
     fail("LOCALCI_BRIDGE_RESULT_DIGEST_MISMATCH", "Result job fingerprint does not match the job.");
+  }
+  stringField(value.source_fingerprint, "result.source_fingerprint", { min: 64, max: 64, pattern: SHA256 });
+  if (typeof job.sourceFingerprint === "string" && value.source_fingerprint !== job.sourceFingerprint) {
+    fail(
+      "LOCALCI_BRIDGE_RESULT_SOURCE_FINGERPRINT_MISMATCH",
+      "result.source_fingerprint does not equal the fingerprint recomputed independently from the supplied sanitized job source.",
+    );
   }
   utcTimestamp(value.completed_at, "result.completed_at");
   enumField(value.status, ["no-action", "blocked", "draft-pr-open", "failed", "triage-completed"], "result.status");

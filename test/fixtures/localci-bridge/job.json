@@ -4,7 +4,6 @@
   "created_at": "2026-08-19T00:40:00.000Z",
   "source": {
     "kind": "gmail",
-    "fingerprint": "1b486bba7bc88659f9509dfc9b16d21989b13be8720f2b0428890606dce06bf3",
     "subject": "RTR small bug: shift filter resets",
     "sender_alias": "mss security product team",
     "received_at": "2026-08-19T00:30:00.000Z",
@@ -28,7 +27,7 @@
     "src/resources/js/Pages/Shifts/**",
     "src/tests/**"
   ],
-  "verification_profile": "peopleplanner-quality",
+  "verification_profile": "peopleplanner-readonly-triage",
   "timeout_minutes": 90,
   "publish": {
     "target_draft_pr": true,

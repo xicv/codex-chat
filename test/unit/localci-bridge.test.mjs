@@ -29,8 +29,9 @@ test("validates the exact PeoplePlanner bridge job and canonical digest", async 
   assert.equal(result.jobId, "pp-20260819-shift-filter");
   assert.equal(
     result.digest,
-    "a4e63ea353630df6e1a5a6dda94ce3836574ec69ac2187350eab6f7bf288ca97",
+    "248fe0946884dd9e81f4267c6f30b398131ca52f1db2e8e5fab596f25f6b7a84",
   );
+  assert.match(result.sourceFingerprint, /^[a-f0-9]{64}$/u);
 });
 
 test("job validation rejects a different independent base SHA", async () => {

@@ -1,7 +1,7 @@
 {
   "schema": "localci-bridge/result/v1",
   "job_id": "pp-20260819-shift-filter",
-  "job_fingerprint": "a4e63ea353630df6e1a5a6dda94ce3836574ec69ac2187350eab6f7bf288ca97",
+  "job_fingerprint": "248fe0946884dd9e81f4267c6f30b398131ca52f1db2e8e5fab596f25f6b7a84",
   "completed_at": "2026-08-19T02:30:00.000Z",
   "status": "draft-pr-open",
   "target": {
@@ -54,5 +54,6 @@
     "deployed": false,
     "released": false,
     "production_accessed": false
-  }
+  },
+  "source_fingerprint": "00ddc6f872032f28865017892a8e697dbb0374908141ae8318ad57f6c5a2fc1b"
 }

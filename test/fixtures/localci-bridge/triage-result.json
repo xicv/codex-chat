@@ -1,7 +1,7 @@
 {
   "schema": "localci-bridge/result/v1",
   "job_id": "pp-20260816-export-slowness-triage",
-  "job_fingerprint": "a4257be939f5365f7e1d210d7781c28e00c575526034388f831560ebef9b0486",
+  "job_fingerprint": "45d62e87c7f0f39c315fd574cded2a8a8a27591d38cf71ce8a5820036ed084a3",
   "completed_at": "2026-08-20T01:30:00.000Z",
   "status": "triage-completed",
   "target": {
@@ -31,7 +31,7 @@
   "request_binding": {
     "pr_number": 3,
     "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "request_file_sha256": "ebe9e456fb90abd0454f62861ec48a4705756840c21593f43d973fbd2d07bf7c"
+    "request_file_sha256": "3e8b345d68885ae036268fbe2fa5863e5971e0404228c6a63c71afdbe8f1983d"
   },
   "bridge_binding": {
     "main_sha": "cccccccccccccccccccccccccccccccccccccccc",
@@ -40,9 +40,9 @@
   },
   "verification": [
     {
-      "name": "codex-read-only-triage",
+      "name": "peopleplanner-readonly-triage",
       "status": "success",
-      "evidence": "Read-only triage completed at the exact base SHA; report digest 2f7a1c0d9b3e5f60…",
+      "evidence": "Read-only triage completed at the exact base SHA; report digest 2f7a1c0d9b3e5f60\u2026",
       "github_run_id": null,
       "github_job_id": null,
       "runner_name": "codex-old-mac",
@@ -56,5 +56,6 @@
     "deployed": false,
     "released": false,
     "production_accessed": false
-  }
+  },
+  "source_fingerprint": "f9d264c4e09ff89ca38b48cee92da5d66584a9f2d0156e9682a3e254896471b5"
 }

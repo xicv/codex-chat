@@ -17,7 +17,8 @@
     "bridge_binding",
     "verification",
     "release_recommendation",
-    "safety"
+    "safety",
+    "source_fingerprint"
   ],
   "properties": {
     "schema": {
@@ -332,6 +333,10 @@
           "pattern": "^[a-f0-9]{40}$"
         }
       }
+    },
+    "source_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
     }
   }
 }

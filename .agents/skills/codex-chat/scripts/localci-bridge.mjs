@@ -9,7 +9,9 @@ import {
 const USAGE = [
   "Usage:",
   "  codex-chat-localci-bridge job-validate --file <job.json> --repository <owner/repo> --base-sha <sha> [--default-branch main]",
-  "  codex-chat-localci-bridge result-validate --job <job.json> --result <result.json> --repository <owner/repo> --base-sha <sha> [--default-branch main] [--head-sha <sha>] [--pr-number <number>]",
+  "  codex-chat-localci-bridge result-validate --job <job.json> --result <result.json> --repository <owner/repo> --base-sha <sha>",
+  "    --request-pr-number <n> --request-head-sha <sha> --request-file-sha256 <sha> --bridge-main-sha <sha> --config-blob-sha <sha>",
+  "    --request-blob-sha <sha> [--default-branch main] [--head-sha <sha>] [--pr-number <number>]",
 ].join("\n");
 
 function parse(argv) {
@@ -96,9 +98,14 @@ async function main() {
     return;
   }
   if (invocation.command === "result-validate") {
+    // Six independently supplied binding values are REQUIRED: they must
+    // come from the reviewer's own GitHub/git queries (or the default-branch
+    // validator receipt), never from the result being validated.
     contract(
       invocation.options,
-      ["job", "result", "repository", "base-sha"],
+      ["job", "result", "repository", "base-sha",
+       "request-pr-number", "request-head-sha", "request-file-sha256",
+       "bridge-main-sha", "config-blob-sha", "request-blob-sha"],
       ["default-branch", "head-sha", "pr-number"],
     );
     const job = await validateBridgeJobFile(invocation.options.job, {
@@ -106,16 +113,45 @@ async function main() {
       baseSha: invocation.options["base-sha"],
       defaultBranch: invocation.options["default-branch"] ?? "main",
     });
+    const checked = await validateBridgeResultFile(
+      invocation.options.result,
+      job,
+      {
+        headSha: invocation.options["head-sha"] ?? null,
+        pullRequestNumber: parsePrNumber(invocation.options["pr-number"]),
+      },
+    );
+    // Exact comparison against independently supplied values.
+    const expectedRequest = {
+      pr_number: Number.parseInt(invocation.options["request-pr-number"], 10),
+      head_sha: invocation.options["request-head-sha"],
+      request_file_sha256: invocation.options["request-file-sha256"],
+    };
+    const expectedBridge = {
+      main_sha: invocation.options["bridge-main-sha"],
+      config_blob_sha: invocation.options["config-blob-sha"],
+      request_blob_sha: invocation.options["request-blob-sha"],
+    };
+    const actualRequest = checked.result.request_binding;
+    for (const key of Object.keys(expectedRequest)) {
+      if (actualRequest[key] !== expectedRequest[key]) {
+        throw new CodexChatError("BINDING_MISMATCH", `result.request_binding.${key} is ${actualRequest[key]}, independently supplied value is ${expectedRequest[key]}.`);
+      }
+    }
+    const actualBridge = checked.result.bridge_binding;
+    for (const key of Object.keys(expectedBridge)) {
+      if (actualBridge[key] !== expectedBridge[key]) {
+        throw new CodexChatError("BINDING_MISMATCH", `result.bridge_binding.${key} is ${actualBridge[key]}, independently supplied value is ${expectedBridge[key]}.`);
+      }
+    }
     emit(
       invocation.command,
-      await validateBridgeResultFile(
-        invocation.options.result,
-        job,
-        {
-          headSha: invocation.options["head-sha"] ?? null,
-          pullRequestNumber: parsePrNumber(invocation.options["pr-number"]),
+      Object.assign({}, checked, {
+        independently_bound: {
+          request_binding: expectedRequest,
+          bridge_binding: expectedBridge,
         },
-      ),
+      }),
     );
     return;
   }

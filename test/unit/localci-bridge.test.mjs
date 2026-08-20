@@ -126,3 +126,67 @@ test("bridge digest is independent of object insertion order", () => {
     bridgeDigest({ a: 1, z: 2 }),
   );
 });
+
+test("triage results embed a complete sanitized report and reject unsafe ones", async () => {
+  const triageJobPath = path.join(root, "test", "fixtures", "localci-bridge", "triage-job.json");
+  const triageResultPath = path.join(root, "test", "fixtures", "localci-bridge", "triage-result.json");
+  const triageExpectations = {
+    repository: "xicv/PeoplePlanner",
+    baseSha: "d9fe027113486bc31d311d7c7dfffea4749bced4",
+    defaultBranch: "main",
+  };
+  const triageJob = await validateBridgeJobFile(triageJobPath, triageExpectations);
+  const value = await json(triageResultPath);
+  const checked = validateBridgeResult(value, triageJob, {});
+  assert.equal(checked.valid, true);
+  assert.equal(checked.result.status, "triage-completed");
+  assert.equal(checked.actionAuthorized, false);
+
+  const missing = JSON.parse(JSON.stringify(value));
+  missing.triage_report = null;
+  assert.throws(
+    () => validateBridgeResult(missing, triageJob, {}),
+    { code: "LOCALCI_BRIDGE_TRIAGE_INVALID" },
+  );
+
+  const malformed = JSON.parse(JSON.stringify(value));
+  delete malformed.triage_report.findings[0].confidence;
+  assert.throws(
+    () => validateBridgeResult(malformed, triageJob, {}),
+    { code: "LOCALCI_BRIDGE_KEYS_INVALID" },
+  );
+
+  const oversized = JSON.parse(JSON.stringify(value));
+  oversized.triage_report.findings = Array.from({ length: 31 }, () => value.triage_report.findings[0]);
+  assert.throws(
+    () => validateBridgeResult(oversized, triageJob, {}),
+    { code: "LOCALCI_BRIDGE_TRIAGE_INVALID" },
+  );
+
+  const leaked = JSON.parse(JSON.stringify(value));
+  leaked.triage_report.summary = "Sent the analysis to ops@example.com yesterday.";
+  assert.throws(
+    () => validateBridgeResult(leaked, triageJob, {}),
+    { code: "LOCALCI_BRIDGE_SENSITIVE_TEXT" },
+  );
+
+  const phoned = JSON.parse(JSON.stringify(value));
+  phoned.triage_report.notes = "Call the reporter on +61 8 8123 4567 for details.";
+  assert.throws(
+    () => validateBridgeResult(phoned, triageJob, {}),
+    { code: "LOCALCI_BRIDGE_SENSITIVE_TEXT" },
+  );
+
+  // A draft-PR result may never carry a triage report.
+  const draftJob = await validateBridgeJobFile(jobPath, expectations);
+  const draftResult = await json(resultPath);
+  const smuggled = JSON.parse(JSON.stringify(draftResult));
+  smuggled.triage_report = value.triage_report;
+  assert.throws(
+    () => validateBridgeResult(smuggled, draftJob, {
+      headSha: "1".repeat(40),
+      pullRequestNumber: 123,
+    }),
+    { code: "LOCALCI_BRIDGE_TRIAGE_INVALID" },
+  );
+});

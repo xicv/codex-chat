@@ -1,9 +1,9 @@
 {
   "schema": "codex-chat/localci-bridge-authority/v1",
   "authoritative_repository": "xicv/localci-bridge",
-  "authoritative_commit_sha": "d9e76f3e50167c7db4c4b2220047dfc74e8f3eb7",
+  "authoritative_commit_sha": "2649ea16262c0eb78c3878886c47c39fe7166783",
   "schemas": {
     "localci-bridge-job-v1.schema.json": "46ccc2e7fceb5ce82782ae1d13a04decbc9fa48c560a02ceb652cb27758e11af",
-    "localci-bridge-result-v1.schema.json": "2c65454deafdb4a6d77a75a1c493dae05225683a05595507d1bf26bd3d95d06a"
+    "localci-bridge-result-v1.schema.json": "a0bb3c0cadd8203be9cd23285faea25cb990a005b21fc55a60ca248a4f110238"
   }
 }

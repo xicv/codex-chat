@@ -5,63 +5,284 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema", "job_id", "job_fingerprint", "completed_at", "status",
-    "target", "pull_request", "verification", "release_recommendation",
+    "schema",
+    "job_id",
+    "job_fingerprint",
+    "completed_at",
+    "status",
+    "target",
+    "pull_request",
+    "triage_report",
+    "verification",
+    "release_recommendation",
     "safety"
   ],
   "properties": {
-    "schema": {"const": "localci-bridge/result/v1"},
-    "job_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{7,79}$"},
-    "job_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-    "completed_at": {"type": "string", "format": "date-time"},
-    "status": {"enum": ["no-action", "blocked", "draft-pr-open", "failed"]},
+    "schema": {
+      "const": "localci-bridge/result/v1"
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{7,79}$"
+    },
+    "job_fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "enum": [
+        "no-action",
+        "blocked",
+        "draft-pr-open",
+        "failed",
+        "triage-completed"
+      ]
+    },
     "target": {
-      "type": "object", "additionalProperties": false,
-      "required": ["repository", "base_sha", "head_sha"],
-      "properties": {
-        "repository": {"type": "string"},
-        "base_sha": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
-        "head_sha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{40}$"}
-      }
-    },
-    "pull_request": {
-      "type": ["object", "null"],
+      "type": "object",
       "additionalProperties": false,
-      "required": ["number", "url", "draft", "mergeability", "ci_state"],
+      "required": [
+        "repository",
+        "base_sha",
+        "head_sha"
+      ],
       "properties": {
-        "number": {"type": "integer", "minimum": 1},
-        "url": {"type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$"},
-        "draft": {"const": true},
-        "mergeability": {"enum": ["mergeable", "conflicting", "unknown"]},
-        "ci_state": {"enum": ["pending", "success", "failure", "unknown"]}
-      }
-    },
-    "verification": {
-      "type": "array", "maxItems": 30,
-      "items": {
-        "type": "object", "additionalProperties": false,
-        "required": ["name", "status", "evidence", "github_run_id", "github_job_id", "runner_name", "artifact_sha256"],
-        "properties": {
-          "name": {"type": "string", "minLength": 1, "maxLength": 120},
-          "status": {"enum": ["success", "failure", "skipped", "pending"]},
-          "evidence": {"type": "string", "maxLength": 1000},
-          "github_run_id": {"type": ["integer", "null"], "minimum": 1},
-          "github_job_id": {"type": ["integer", "null"], "minimum": 1},
-          "runner_name": {"type": ["string", "null"], "maxLength": 120, "pattern": "^[A-Za-z0-9._-]*$"},
-          "artifact_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+        "repository": {
+          "type": "string"
+        },
+        "base_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "head_sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{40}$"
         }
       }
     },
-    "release_recommendation": {"enum": ["do-not-release", "needs-new-mac-review", "blocked"]},
-    "safety": {
-      "type": "object", "additionalProperties": false,
-      "required": ["gmail_mutated", "merged", "deployed", "released", "production_accessed"],
+    "pull_request": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "number",
+        "url",
+        "draft",
+        "mergeability",
+        "ci_state"
+      ],
       "properties": {
-        "gmail_mutated": {"const": false},
-        "merged": {"const": false},
-        "deployed": {"const": false},
-        "released": {"const": false},
-        "production_accessed": {"const": false}
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$"
+        },
+        "draft": {
+          "const": true
+        },
+        "mergeability": {
+          "enum": [
+            "mergeable",
+            "conflicting",
+            "unknown"
+          ]
+        },
+        "ci_state": {
+          "enum": [
+            "pending",
+            "success",
+            "failure",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "verification": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "status",
+          "evidence",
+          "github_run_id",
+          "github_job_id",
+          "runner_name",
+          "artifact_sha256"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "status": {
+            "enum": [
+              "success",
+              "failure",
+              "skipped",
+              "pending"
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "github_run_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "github_job_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "runner_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120,
+            "pattern": "^[A-Za-z0-9._-]*$"
+          },
+          "artifact_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      }
+    },
+    "release_recommendation": {
+      "enum": [
+        "do-not-release",
+        "needs-new-mac-review",
+        "blocked"
+      ]
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gmail_mutated",
+        "merged",
+        "deployed",
+        "released",
+        "production_accessed"
+      ],
+      "properties": {
+        "gmail_mutated": {
+          "const": false
+        },
+        "merged": {
+          "const": false
+        },
+        "deployed": {
+          "const": false
+        },
+        "released": {
+          "const": false
+        },
+        "production_accessed": {
+          "const": false
+        }
+      }
+    },
+    "triage_report": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "findings",
+        "risk",
+        "recommended_action",
+        "notes"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "findings": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "area",
+              "observation",
+              "confidence"
+            ],
+            "properties": {
+              "area": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "observation": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "confidence": {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            }
+          }
+        },
+        "risk": {
+          "enum": [
+            "none-identified",
+            "low",
+            "medium",
+            "high",
+            "blocked"
+          ]
+        },
+        "recommended_action": {
+          "enum": [
+            "no-action",
+            "draft-followup-job",
+            "needs-human-decision"
+          ]
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        }
       }
     }
   }

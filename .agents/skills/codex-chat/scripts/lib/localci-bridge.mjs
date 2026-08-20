@@ -67,6 +67,41 @@ function looksLikePhoneNumber(value) {
   return false;
 }
 
+// The complete sanitized triage report travels inside result/v1. It is
+// bounded and privacy-screened exactly like sanitized source fields.
+function validateTriageReport(value, label) {
+  if (value === null) return null;
+  exactObject(value, ["summary", "findings", "risk", "recommended_action", "notes"], label);
+  stringField(value.summary, `${label}.summary`, { min: 1, max: 2000 });
+  rejectSensitiveText(value.summary, `${label} summary`, { source: true });
+  if (looksLikePhoneNumber(value.summary)) {
+    fail("LOCALCI_BRIDGE_SENSITIVE_TEXT", `${label} summary appears to contain a phone number.`);
+  }
+  if (!Array.isArray(value.findings) || value.findings.length > 30) {
+    fail("LOCALCI_BRIDGE_TRIAGE_INVALID", `${label}.findings must be a bounded array.`);
+  }
+  for (const finding of value.findings) {
+    exactObject(finding, ["area", "observation", "confidence"], `${label} finding`);
+    stringField(finding.area, "finding.area", { max: 120 });
+    stringField(finding.observation, "finding.observation", { min: 1, max: 1000 });
+    enumField(finding.confidence, ["low", "medium", "high"], "finding.confidence");
+    rejectSensitiveText(`${finding.area} ${finding.observation}`, "triage finding", { source: true });
+    if (looksLikePhoneNumber(`${finding.area} ${finding.observation}`)) {
+      fail("LOCALCI_BRIDGE_SENSITIVE_TEXT", "triage finding appears to contain a phone number.");
+    }
+  }
+  enumField(value.risk, ["none-identified", "low", "medium", "high", "blocked"], `${label}.risk`);
+  enumField(value.recommended_action, ["no-action", "draft-followup-job", "needs-human-decision"], `${label}.recommended_action`);
+  if (value.notes !== null) {
+    stringField(value.notes, `${label}.notes`, { max: 2000 });
+    rejectSensitiveText(value.notes, `${label} notes`, { source: true });
+    if (looksLikePhoneNumber(value.notes)) {
+      fail("LOCALCI_BRIDGE_SENSITIVE_TEXT", `${label} notes appear to contain a phone number.`);
+    }
+  }
+  return value;
+}
+
 function exactObject(value, keys, label) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     fail("LOCALCI_BRIDGE_OBJECT_INVALID", `${label} must be an object.`);
@@ -371,7 +406,8 @@ export function validateBridgeResult(value, job, identity = {}) {
   const { headSha = null, pullRequestNumber = null } = identity;
   exactObject(value, [
     "schema", "job_id", "job_fingerprint", "completed_at", "status", "target",
-    "pull_request", "verification", "release_recommendation", "safety",
+    "pull_request", "triage_report", "verification", "release_recommendation",
+    "safety",
   ], "result");
   if (value.schema !== "localci-bridge/result/v1") {
     fail("LOCALCI_BRIDGE_SCHEMA_INVALID", "Unsupported result schema.");
@@ -383,7 +419,7 @@ export function validateBridgeResult(value, job, identity = {}) {
     fail("LOCALCI_BRIDGE_RESULT_DIGEST_MISMATCH", "Result job fingerprint does not match the job.");
   }
   utcTimestamp(value.completed_at, "result.completed_at");
-  enumField(value.status, ["no-action", "blocked", "draft-pr-open", "failed"], "result.status");
+  enumField(value.status, ["no-action", "blocked", "draft-pr-open", "failed", "triage-completed"], "result.status");
 
   exactObject(value.target, ["repository", "base_sha", "head_sha"], "result.target");
   if (value.target.repository !== job.job.target.repository || value.target.base_sha !== job.job.target.base_sha) {
@@ -420,6 +456,18 @@ export function validateBridgeResult(value, job, identity = {}) {
   }
   if (value.status !== "draft-pr-open" && value.pull_request !== null) {
     fail("LOCALCI_BRIDGE_RESULT_PR_INVALID", "Only draft-pr-open results may contain a pull request.");
+  }
+
+  validateTriageReport(value.triage_report, "result.triage_report");
+  if (value.status === "triage-completed") {
+    if (job.job.task_type !== "triage-report") {
+      fail("LOCALCI_BRIDGE_TRIAGE_INVALID", "Only read-only triage jobs may carry a triage_report.");
+    }
+    if (value.triage_report === null) {
+      fail("LOCALCI_BRIDGE_TRIAGE_INVALID", "triage-completed results must embed the complete sanitized triage report.");
+    }
+  } else if (value.triage_report !== null) {
+    fail("LOCALCI_BRIDGE_TRIAGE_INVALID", "Only triage-completed results may carry a triage_report.");
   }
   if (headSha !== null && value.target.head_sha !== null && value.target.head_sha !== headSha) {
     fail(

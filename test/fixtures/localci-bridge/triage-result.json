@@ -1,0 +1,50 @@
+{
+  "schema": "localci-bridge/result/v1",
+  "job_id": "pp-20260816-export-slowness-triage",
+  "job_fingerprint": "a4257be939f5365f7e1d210d7781c28e00c575526034388f831560ebef9b0486",
+  "completed_at": "2026-08-20T01:30:00.000Z",
+  "status": "triage-completed",
+  "target": {
+    "repository": "xicv/PeoplePlanner",
+    "base_sha": "d9fe027113486bc31d311d7c7dfffea4749bced4",
+    "head_sha": null
+  },
+  "pull_request": null,
+  "triage_report": {
+    "summary": "The Sunday roster export is slow because the export loop issues one shift query per roster row before the weekly lock deadline, quadratic in roster size.",
+    "findings": [
+      {
+        "area": "src/Export/RosterExport.php",
+        "observation": "The export path iterates roster rows and queries shifts per row at the exact reviewed base SHA.",
+        "confidence": "high"
+      },
+      {
+        "area": "database access layer",
+        "observation": "No eager loading is used on the shift relation during export.",
+        "confidence": "medium"
+      }
+    ],
+    "risk": "medium",
+    "recommended_action": "draft-followup-job",
+    "notes": "A follow-up draft-PR job can batch the shift lookup; bounded to the export path with a regression test on export timing."
+  },
+  "verification": [
+    {
+      "name": "codex-read-only-triage",
+      "status": "success",
+      "evidence": "Read-only triage completed at the exact base SHA; report digest 2f7a1c0d9b3e5f60…",
+      "github_run_id": null,
+      "github_job_id": null,
+      "runner_name": "codex-old-mac",
+      "artifact_sha256": "2f7a1c0d9b3e5f60718a2c4e6d8f0a1b3c5d7e9f2a4c6d8e0f2a4b6c8d0e2f4a"
+    }
+  ],
+  "release_recommendation": "do-not-release",
+  "safety": {
+    "gmail_mutated": false,
+    "merged": false,
+    "deployed": false,
+    "released": false,
+    "production_accessed": false
+  }
+}

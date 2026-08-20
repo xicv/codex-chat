@@ -1,0 +1,36 @@
+{
+  "schema": "localci-bridge/job/v1",
+  "id": "pp-20260816-export-slowness-triage",
+  "created_at": "2026-08-19T23:50:00.000Z",
+  "source": {
+    "kind": "gmail",
+    "fingerprint": "8eabc2b73bd9060a98c49fa97ffd41e4a602fb7a3044ee766f7d2fee63058596",
+    "subject": "PeoplePlanner roster export is slow on Sunday evenings",
+    "sender_alias": "mss security product team",
+    "received_at": "2026-08-16T09:05:00.000Z",
+    "summary": "Roster export takes several minutes on Sunday evenings when the weekly roster locks. Assess whether the export path can be triaged as a performance task without touching code."
+  },
+  "target": {
+    "repository": "xicv/PeoplePlanner",
+    "base_sha": "d9fe027113486bc31d311d7c7dfffea4749bced4",
+    "default_branch": "main"
+  },
+  "task_type": "triage-report",
+  "mode": "read-only",
+  "priority": "performance",
+  "instructions": "Investigate, without modifying anything, why the roster export is slow on Sunday evenings: identify the likely code path, the queries or loops involved, and what evidence a follow-up code change job would need. Report findings only.",
+  "acceptance_criteria": [
+    "The export code path is identified with file references at the exact base SHA.",
+    "The dominant cost is described with a plausible mechanism.",
+    "A follow-up draft-PR job is outlined with a bounded allowed-path set."
+  ],
+  "allowed_paths": [],
+  "verification_profile": "peopleplanner-quality",
+  "timeout_minutes": 30,
+  "publish": {
+    "target_draft_pr": false,
+    "merge": false,
+    "deploy": false,
+    "release": false
+  }
+}

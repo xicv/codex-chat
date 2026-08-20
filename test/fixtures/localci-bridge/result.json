@@ -16,6 +16,7 @@
     "mergeability": "unknown",
     "ci_state": "pending"
   },
+  "triage_report": null,
   "verification": [
     {
       "name": "focused regression",

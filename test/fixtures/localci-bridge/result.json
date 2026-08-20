@@ -17,6 +17,11 @@
     "ci_state": "pending"
   },
   "triage_report": null,
+  "request_binding": {
+    "pr_number": 3,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "request_file_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
   "verification": [
     {
       "name": "focused regression",

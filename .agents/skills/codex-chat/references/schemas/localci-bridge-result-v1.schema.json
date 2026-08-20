@@ -13,6 +13,7 @@
     "target",
     "pull_request",
     "triage_report",
+    "request_binding",
     "verification",
     "release_recommendation",
     "safety"
@@ -282,6 +283,29 @@
             "null"
           ],
           "maxLength": 2000
+        }
+      }
+    },
+    "request_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pr_number",
+        "head_sha",
+        "request_file_sha256"
+      ],
+      "properties": {
+        "pr_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "head_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "request_file_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
         }
       }
     }

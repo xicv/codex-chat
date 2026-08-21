@@ -230,44 +230,123 @@ test("codex-chat rejects every unsafe job-id case through runtime and a real sch
   }
 });
 
-test("bundle-validate compares every digest independently and rejects mismatches", async () => {
-  const { mkdtemp, writeFile: wf } = await import("node:fs/promises");
+test("bundle-validate computes digests, validates evidence, and rejects the full tamper matrix", async () => {
+  const { mkdtemp, writeFile: wf, symlink, chmod } = await import("node:fs/promises");
+  const { createHash } = await import("node:crypto");
   const osMod = await import("node:os");
-  const directory = await mkdtemp(path.join(osMod.tmpdir(), "ccbundle-"));
-  const bundle = {
-    schema: "localci-bridge/result-bundle/v1",
-    job_id: "some-job-id-x",
-    result: { job_id: "some-job-id-x" },
-    result_sha256: "1".repeat(64),
-    result_meta: { job_digest: "2".repeat(64) },
-    source_fingerprint: "3".repeat(64),
-    job_digest: "2".repeat(64),
-    request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
-    bridge_authority_binding: { main_sha: "5".repeat(40) },
-    agent_execution_receipt: { job_id: "some-job-id-x" },
-    created_at: "2026-08-21T00:00:00.000Z",
-    producer: { hostname: "h", user: "u" },
-    manifest_sha256: "6".repeat(64),
+  const directory = await mkdtemp(path.join(osMod.tmpdir(), "ccbundle2-"));
+
+  // Build a well-formed bundle with real canonical digests.
+  const { canonicalBridgeJson } = await import("../../.agents/skills/codex-chat/scripts/lib/localci-bridge.mjs");
+  const digestOf = (v) => createHash("sha256").update(canonicalBridgeJson(v)).digest("hex");
+  const build = () => {
+    const result = {
+      schema: "localci-bridge/result/v1", job_id: "some-job-id-x", job_fingerprint: "2".repeat(64), source_fingerprint: "3".repeat(64),
+      completed_at: "2026-08-21T00:00:00.000Z", status: "triage-completed",
+      target: { repository: "xicv/PeoplePlanner", base_sha: "d".repeat(40), head_sha: null },
+      pull_request: null,
+      triage_report: { summary: "s", findings: [], risk: "low", recommended_action: "no-action", notes: null },
+      request_binding: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
+      bridge_binding: { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) },
+      verification: [], release_recommendation: "do-not-release",
+      safety: { gmail_mutated: false, merged: false, deployed: false, released: false, production_accessed: false },
+    };
+    const bundle = {
+      schema: "localci-bridge/result-bundle/v1",
+      job_id: "some-job-id-x",
+      result,
+      result_sha256: null,
+      result_meta: { schema: "localci-bridge/result-meta/v1", job_id: "some-job-id-x", job_digest: "2".repeat(64), source_fingerprint: "3".repeat(64), fencing_token: 3, result_sha256: null },
+      source_fingerprint: "3".repeat(64),
+      job_digest: "2".repeat(64),
+      request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
+      bridge_authority_binding: { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) },
+      agent_execution_receipt: { job_id: "some-job-id-x", job_digest: "2".repeat(64), source_fingerprint: "3".repeat(64), fencing_token: 3, result_sha256: null, execution_mode: "codex-read-only" },
+      created_at: "2026-08-21T00:00:00.000Z",
+      producer: { hostname: "h", user: "localcibridge", role: "agent" },
+      manifest_sha256: null,
+    };
+    bundle.result_sha256 = digestOf(result);
+    bundle.result_meta.result_sha256 = bundle.result_sha256;
+    bundle.agent_execution_receipt.result_sha256 = bundle.result_sha256;
+    const { manifest_sha256, ...rest } = bundle;
+    bundle.manifest_sha256 = digestOf(rest);
+    return bundle;
   };
-  const bundlePath = path.join(directory, "b.json");
-  await wf(bundlePath, JSON.stringify(bundle, null, 2) + "\n", { mode: 0o600 });
-  const base = ["bundle-validate", "--bundle", bundlePath, "--job-digest", "2".repeat(64), "--source-fingerprint", "3".repeat(64), "--result-sha256", "1".repeat(64), "--manifest-sha256", "6".repeat(64), "--bridge-main-sha", "5".repeat(40)];
-  const good = await run(base);
-  assert.equal(good.code, 0, good.stderr);
-  assert.equal(good.output.data.independently_bound.job_digest, "2".repeat(64));
-  // Wrong manifest digest.
-  const bad = await run(base.map((arg, i) => (i === base.indexOf("--manifest-sha256") + 1 ? "0".repeat(64) : arg)));
-  assert.notEqual(bad.code, 0);
-  assert.equal(bad.output.error.code, "LOCALCI_BRIDGE_BUNDLE_MISMATCH");
-  // Wrong bridge main.
-  const bad2 = await run(base.map((arg, i) => (i === base.indexOf("--bridge-main-sha") + 1 ? "9".repeat(40) : arg)));
-  assert.notEqual(bad2.code, 0);
-  // Missing required option.
-  const missing = await run(base.filter((_, i) => i !== base.indexOf("--source-fingerprint") && i !== base.indexOf("--source-fingerprint") + 1));
-  assert.notEqual(missing.code, 0);
-  assert.match(missing.output.error.message, /Missing option --source-fingerprint/u);
-  // Request binding compared independently when supplied.
-  const withReq = await run([...base, "--request-pr-number", "8"]);
-  assert.notEqual(withReq.code, 0);
-  assert.equal(withReq.output.error.code, "LOCALCI_BRIDGE_BUNDLE_MISMATCH");
+
+  const writeBundle = async (value, name = "b.json") => {
+    const p = path.join(directory, name);
+    await wf(p, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    return p;
+  };
+  const good = build();
+  const goodPath = await writeBundle(good);
+  const base = ["bundle-validate", "--bundle", goodPath, "--job-digest", "2".repeat(64), "--source-fingerprint", "3".repeat(64), "--result-sha256", good.result_sha256, "--manifest-sha256", good.manifest_sha256, "--bridge-main-sha", "5".repeat(40)];
+  const goodRun = await run(base);
+  assert.equal(goodRun.code, 0, goodRun.stderr);
+
+  // Tamper: result text only.
+  {
+    const v = build();
+    v.result.triage_report.summary = "tampered";
+    const r = await run([...base.slice(0, 2), "--bundle", await writeBundle(v, "t1.json"), ...base.slice(3)]);
+    assert.notEqual(r.code, 0);
+  }
+  // Tamper: result metadata only.
+  {
+    const v = build();
+    v.result_meta.fencing_token = 99;
+    const r = await run([...base.slice(0, 2), "--bundle", await writeBundle(v, "t2.json"), ...base.slice(3)]);
+    assert.notEqual(r.code, 0);
+  }
+  // Tamper: agent receipt only.
+  {
+    const v = build();
+    v.agent_execution_receipt.execution_mode = "workspace-write";
+    const r = await run([...base.slice(0, 2), "--bundle", await writeBundle(v, "t3.json"), ...base.slice(3)]);
+    assert.notEqual(r.code, 0);
+  }
+  // Tamper: producer only.
+  {
+    const v = build();
+    v.producer.role = "publisher";
+    const r = await run([...base.slice(0, 2), "--bundle", await writeBundle(v, "t4.json"), ...base.slice(3)]);
+    assert.notEqual(r.code, 0);
+  }
+  // Stale claimed digest (wrong manifest-sha on the CLI).
+  {
+    const r = await run(base.map((arg, i) => (i === base.indexOf("--manifest-sha256") + 1 ? "0".repeat(64) : arg)));
+    assert.notEqual(r.code, 0);
+    assert.equal(r.output.error.code, "LOCALCI_BRIDGE_BUNDLE_MISMATCH");
+  }
+  // Extra nested field.
+  {
+    const v = build();
+    v.result_meta.surprise = true;
+    const r = await run([...base.slice(0, 2), "--bundle", await writeBundle(v, "t5.json"), ...base.slice(3)]);
+    assert.notEqual(r.code, 0);
+  }
+  // Duplicate JSON key.
+  {
+    const p = path.join(directory, "dup.json");
+    await wf(p, `${JSON.stringify(good, null, 2).replace('"job_id": "some-job-id-x",', '"job_id": "some-job-id-x",\n  "job_id": "some-job-id-x",')}\n`, { mode: 0o600 });
+    const r = await run(base.map((arg, i) => (i === base.indexOf("--bundle") + 1 ? p : arg)));
+    assert.notEqual(r.code, 0);
+  }
+  // Symlink.
+  {
+    const link = path.join(directory, "link.json");
+    await symlink(goodPath, link);
+    const r = await run(base.map((arg, i) => (i === base.indexOf("--bundle") + 1 ? link : arg)));
+    assert.notEqual(r.code, 0);
+  }
+  // Oversized bundle.
+  {
+    const v = build();
+    v.result.triage_report.summary = "x".repeat(3 * 1024 * 1024);
+    const p = path.join(directory, "big.json");
+    await wf(p, JSON.stringify(v), { mode: 0o600 });
+    const r = await run(base.map((arg, i) => (i === base.indexOf("--bundle") + 1 ? p : arg)));
+    assert.notEqual(r.code, 0);
+  }
 });

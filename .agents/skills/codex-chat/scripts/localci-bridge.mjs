@@ -190,27 +190,73 @@ main().catch((error) => {
 // queries); nothing is derived from the bundle itself.
 function bundleValidateCommand(invocation) {
   const required = ["bundle", "job-digest", "source-fingerprint", "result-sha256", "manifest-sha256", "bridge-main-sha"];
-  const optional = ["request-pr-number", "request-head-sha", "request-file-sha256"];
+  const optional = ["request-pr-number", "request-head-sha", "request-file-sha256", "job", "config-blob-sha", "request-blob-sha"];
   contractStrict(invocation.options, required, optional);
   return async () => {
-    const { readFileSync } = await import("node:fs");
+    const { validateBridgeJobFile, validateBridgeResult, canonicalBridgeJson } = await import("./lib/localci-bridge.mjs");
+    const { readTrustedFileSnapshot } = await import("./lib/trusted-file-snapshot.mjs");
     const { createHash } = await import("node:crypto");
+
+    // 1. Safe bounded read: symlinks and changed-during-read files rejected.
+    const MAX_BUNDLE_BYTES = 2 * 1024 * 1024;
+    const snapshot = await readTrustedFileSnapshot(invocation.options.bundle, { minBytes: 2, maxBytes: MAX_BUNDLE_BYTES });
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
+
+    // 2. Strict JSON with duplicate-key rejection.
     let value;
     try {
-      value = JSON.parse(readFileSync(invocation.options.bundle, "utf8"));
-    } catch {
-      throw new CodexChatError("USAGE", `Cannot read bundle ${invocation.options.bundle}`);
+      value = parseStrictJsonNoDuplicates(text);
+    } catch (error) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", `Bundle JSON is invalid: ${error.message}`);
     }
+
+    // 3. Exact top-level keys.
     if (value.schema !== "localci-bridge/result-bundle/v1") {
       throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", `Unsupported bundle schema ${String(value.schema)}.`);
     }
-    // Independent comparisons — expected values come ONLY from the CLI.
+    const TOP = ["schema", "job_id", "result", "result_sha256", "result_meta", "source_fingerprint", "job_digest", "request_binding_receipt", "bridge_authority_binding", "agent_execution_receipt", "created_at", "producer", "manifest_sha256"];
+    assertExactKeys(value, TOP, "bundle");
+    const NESTED = {
+      result_meta: ["schema", "job_id", "job_digest", "source_fingerprint", "fencing_token", "result_sha256"],
+      request_binding_receipt: ["pr_number", "head_sha", "request_file_sha256"],
+      bridge_authority_binding: ["main_sha", "config_blob_sha", "request_blob_sha"],
+      agent_execution_receipt: ["job_id", "job_digest", "source_fingerprint", "fencing_token", "result_sha256", "execution_mode"],
+      producer: ["hostname", "user", "role"],
+    };
+    for (const [key, keys] of Object.entries(NESTED)) assertExactKeys(value[key], keys, `bundle.${key}`);
+
+    // 4. Recompute the manifest digest (canonical JSON over everything
+    // except manifest_sha256) and the canonical result digest.
+    const digestOf = (v) => createHash("sha256").update(canonicalBridgeJson(v)).digest("hex");
+    const { manifest_sha256, ...rest } = value;
+    if (digestOf(rest) !== manifest_sha256) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "manifest_sha256 does not match the recomputed canonical digest.");
+    }
+    if (digestOf(value.result) !== value.result_sha256) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "result_sha256 does not match the recomputed canonical result digest.");
+    }
+
+    // 5. Producer + agent execution receipt.
+    if (value.producer.role !== "agent") {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", `producer.role must be "agent".`);
+    }
+    if (value.agent_execution_receipt.job_id !== value.job_id || value.agent_execution_receipt.execution_mode !== "codex-read-only") {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "agent_execution_receipt does not bind this job with read-only execution.");
+    }
+    if (value.agent_execution_receipt.result_sha256 !== value.result_sha256 || value.agent_execution_receipt.job_digest !== value.job_digest || value.agent_execution_receipt.source_fingerprint !== value.source_fingerprint) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "agent_execution_receipt digests do not match the manifest.");
+    }
+    if (value.result_meta.job_id !== value.job_id || value.result_meta.job_digest !== value.job_digest || value.result_meta.source_fingerprint !== value.source_fingerprint || value.result_meta.result_sha256 !== value.result_sha256) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "result_meta does not match the manifest digests.");
+    }
+
+    // 6. Independent comparisons — expected values come ONLY from the CLI.
     const checks = [
       ["job_digest", value.job_digest, invocation.options["job-digest"]],
       ["source_fingerprint", value.source_fingerprint, invocation.options["source-fingerprint"]],
       ["result_sha256", value.result_sha256, invocation.options["result-sha256"]],
       ["manifest_sha256", value.manifest_sha256, invocation.options["manifest-sha256"]],
-      ["bridge_authority_binding.main_sha", value.bridge_authority_binding?.main_sha, invocation.options["bridge-main-sha"]],
+      ["bridge_authority_binding.main_sha", value.bridge_authority_binding.main_sha, invocation.options["bridge-main-sha"]],
     ];
     for (const [label, actual, expected] of checks) {
       if (actual !== expected) {
@@ -219,22 +265,51 @@ function bundleValidateCommand(invocation) {
     }
     if (invocation.options["request-pr-number"]) {
       const n = parsePrNumber(invocation.options["request-pr-number"]);
-      if (value.request_binding_receipt?.pr_number !== n) {
+      if (value.request_binding_receipt.pr_number !== n) {
         throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.pr_number differs from the independently supplied value.");
       }
     }
-    if (invocation.options["request-head-sha"] && value.request_binding_receipt?.head_sha !== invocation.options["request-head-sha"]) {
+    if (invocation.options["request-head-sha"] && value.request_binding_receipt.head_sha !== invocation.options["request-head-sha"]) {
       throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.head_sha differs.");
     }
-    if (invocation.options["request-file-sha256"] && value.request_binding_receipt?.request_file_sha256 !== invocation.options["request-file-sha256"]) {
+    if (invocation.options["request-file-sha256"] && value.request_binding_receipt.request_file_sha256 !== invocation.options["request-file-sha256"]) {
       throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.request_file_sha256 differs.");
     }
+
+    // 7. When the sanitized job source is supplied, run the COMPLETE result
+    // validator and verify the source fingerprint + embedded bindings.
+    let resultVerdict = null;
+    if (invocation.options.job) {
+      const job = await validateBridgeJobFile(invocation.options.job, {
+        repository: value.result.target?.repository ?? "xicv/PeoplePlanner",
+        baseSha: value.result.target?.base_sha,
+        defaultBranch: "main",
+      });
+      if (job.job.id !== value.job_id) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.job_id differs from the supplied job.");
+      }
+      if (job.digest !== value.job_digest) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.job_digest differs from the supplied job digest.");
+      }
+      resultVerdict = validateBridgeResult(value.result, job, {});
+      if (resultVerdict.result.source_fingerprint !== value.source_fingerprint) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded source_fingerprint differs from the bundle's.");
+      }
+      if (invocation.options["config-blob-sha"] && value.result.bridge_binding?.config_blob_sha !== invocation.options["config-blob-sha"]) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded bridge_binding.config_blob_sha differs.");
+      }
+      if (invocation.options["request-blob-sha"] && value.result.bridge_binding?.request_blob_sha !== invocation.options["request-blob-sha"]) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded bridge_binding.request_blob_sha differs.");
+      }
+    }
+
     return {
       schema: "codex-chat/cli/v1",
       ok: true,
       command: "bundle-validate",
       data: {
         job_id: value.job_id,
+        result_validated: resultVerdict !== null,
         independently_bound: {
           job_digest: invocation.options["job-digest"],
           source_fingerprint: invocation.options["source-fingerprint"],
@@ -245,6 +320,59 @@ function bundleValidateCommand(invocation) {
       },
     };
   };
+}
+
+function assertExactKeys(value, keys, label) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", `${label} must be an object.`);
+  }
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", `${label} keys must be exactly ${JSON.stringify(expected)}.`);
+  }
+}
+
+function parseStrictJsonNoDuplicates(text) {
+  const seen = new Set();
+  const reviver = (key) => {
+    if (key !== "" && seen.has(key)) throw new Error(`duplicate key ${JSON.stringify(key)}`);
+    seen.add(key);
+    return undefined;
+  };
+  void reviver;
+  // JSON.parse revivers cannot see sibling duplicates reliably; use a
+  // lightweight scanner over the raw text for duplicate keys per object.
+  const stack = [new Set()];
+  let depth = 0;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "{") { depth += 1; stack.push(new Set()); i += 1; continue; }
+    if (ch === "}") { depth -= 1; stack.pop(); i += 1; continue; }
+    if (ch === '"') {
+      let j = i + 1;
+      let key = "";
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === "\\") { key += text[j + 1]; j += 2; continue; }
+        key += text[j];
+        j += 1;
+      }
+      // Only treat as a KEY when followed by ':' at this object level.
+      let k = j + 1;
+      while (k < text.length && /\s/.test(text[k])) k += 1;
+      if (k < text.length && text[k] === ":") {
+        if (stack[depth].has(key)) throw new Error(`duplicate key ${JSON.stringify(key)}`);
+        stack[depth].add(key);
+        i = k + 1;
+        continue;
+      }
+      i = j + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return JSON.parse(text);
 }
 
 function contractStrict(options, required, optional = []) {

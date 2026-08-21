@@ -12,6 +12,8 @@ const USAGE = [
   "  codex-chat-localci-bridge result-validate --job <job.json> --result <result.json> --repository <owner/repo> --base-sha <sha>",
   "    --request-pr-number <n> --request-head-sha <sha> --request-file-sha256 <sha> --bridge-main-sha <sha> --config-blob-sha <sha>",
   "    --request-blob-sha <sha> [--default-branch main] [--head-sha <sha>] [--pr-number <number>]",
+  "  codex-chat-localci-bridge bundle-validate --bundle <file> --job-digest <sha> --source-fingerprint <sha> --result-sha256 <sha>",
+  "    --manifest-sha256 <sha> --bridge-main-sha <sha> [--request-pr-number <n>] [--request-head-sha <sha>] [--request-file-sha256 <sha>]",
 ].join("\n");
 
 function parse(argv) {
@@ -97,6 +99,12 @@ async function main() {
     );
     return;
   }
+  if (invocation.command === "bundle-validate") {
+    const run = bundleValidateCommand(invocation);
+    const output = await run();
+    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    return;
+  }
   if (invocation.command === "result-validate") {
     // Six independently supplied binding values are REQUIRED: they must
     // come from the reviewer's own GitHub/git queries (or the default-branch
@@ -175,3 +183,76 @@ main().catch((error) => {
   })}\n`);
   process.exitCode = known ? 2 : 1;
 });
+
+// Phase 12: independent bundle validation. Every expected value must be
+// supplied independently (--agent-receipt, --bundle-manifest carry the
+// OBSERVED artifacts; the expected digests come from the reviewer's own
+// queries); nothing is derived from the bundle itself.
+function bundleValidateCommand(invocation) {
+  const required = ["bundle", "job-digest", "source-fingerprint", "result-sha256", "manifest-sha256", "bridge-main-sha"];
+  const optional = ["request-pr-number", "request-head-sha", "request-file-sha256"];
+  contractStrict(invocation.options, required, optional);
+  return async () => {
+    const { readFileSync } = await import("node:fs");
+    const { createHash } = await import("node:crypto");
+    let value;
+    try {
+      value = JSON.parse(readFileSync(invocation.options.bundle, "utf8"));
+    } catch {
+      throw new CodexChatError("USAGE", `Cannot read bundle ${invocation.options.bundle}`);
+    }
+    if (value.schema !== "localci-bridge/result-bundle/v1") {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", `Unsupported bundle schema ${String(value.schema)}.`);
+    }
+    // Independent comparisons — expected values come ONLY from the CLI.
+    const checks = [
+      ["job_digest", value.job_digest, invocation.options["job-digest"]],
+      ["source_fingerprint", value.source_fingerprint, invocation.options["source-fingerprint"]],
+      ["result_sha256", value.result_sha256, invocation.options["result-sha256"]],
+      ["manifest_sha256", value.manifest_sha256, invocation.options["manifest-sha256"]],
+      ["bridge_authority_binding.main_sha", value.bridge_authority_binding?.main_sha, invocation.options["bridge-main-sha"]],
+    ];
+    for (const [label, actual, expected] of checks) {
+      if (actual !== expected) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", `bundle.${label} is ${actual}, independently supplied value is ${expected}.`);
+      }
+    }
+    if (invocation.options["request-pr-number"]) {
+      const n = parsePrNumber(invocation.options["request-pr-number"]);
+      if (value.request_binding_receipt?.pr_number !== n) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.pr_number differs from the independently supplied value.");
+      }
+    }
+    if (invocation.options["request-head-sha"] && value.request_binding_receipt?.head_sha !== invocation.options["request-head-sha"]) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.head_sha differs.");
+    }
+    if (invocation.options["request-file-sha256"] && value.request_binding_receipt?.request_file_sha256 !== invocation.options["request-file-sha256"]) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.request_file_sha256 differs.");
+    }
+    return {
+      schema: "codex-chat/cli/v1",
+      ok: true,
+      command: "bundle-validate",
+      data: {
+        job_id: value.job_id,
+        independently_bound: {
+          job_digest: invocation.options["job-digest"],
+          source_fingerprint: invocation.options["source-fingerprint"],
+          result_sha256: invocation.options["result-sha256"],
+          manifest_sha256: invocation.options["manifest-sha256"],
+          bridge_main_sha: invocation.options["bridge-main-sha"],
+        },
+      },
+    };
+  };
+}
+
+function contractStrict(options, required, optional = []) {
+  const allowed = new Set([...required, ...optional]);
+  for (const name of Object.keys(options)) {
+    if (!allowed.has(name)) throw new CodexChatError("USAGE", `Unknown option --${name}.`);
+  }
+  for (const name of required) {
+    if (!Object.hasOwn(options, name)) throw new CodexChatError("USAGE", `Missing option --${name}.`);
+  }
+}

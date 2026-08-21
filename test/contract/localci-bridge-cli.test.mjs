@@ -229,3 +229,45 @@ test("codex-chat rejects every unsafe job-id case through runtime and a real sch
     assert.equal(jobValidate({ ...job, id }), true, `schema must accept ${id}`);
   }
 });
+
+test("bundle-validate compares every digest independently and rejects mismatches", async () => {
+  const { mkdtemp, writeFile: wf } = await import("node:fs/promises");
+  const osMod = await import("node:os");
+  const directory = await mkdtemp(path.join(osMod.tmpdir(), "ccbundle-"));
+  const bundle = {
+    schema: "localci-bridge/result-bundle/v1",
+    job_id: "some-job-id-x",
+    result: { job_id: "some-job-id-x" },
+    result_sha256: "1".repeat(64),
+    result_meta: { job_digest: "2".repeat(64) },
+    source_fingerprint: "3".repeat(64),
+    job_digest: "2".repeat(64),
+    request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
+    bridge_authority_binding: { main_sha: "5".repeat(40) },
+    agent_execution_receipt: { job_id: "some-job-id-x" },
+    created_at: "2026-08-21T00:00:00.000Z",
+    producer: { hostname: "h", user: "u" },
+    manifest_sha256: "6".repeat(64),
+  };
+  const bundlePath = path.join(directory, "b.json");
+  await wf(bundlePath, JSON.stringify(bundle, null, 2) + "\n", { mode: 0o600 });
+  const base = ["bundle-validate", "--bundle", bundlePath, "--job-digest", "2".repeat(64), "--source-fingerprint", "3".repeat(64), "--result-sha256", "1".repeat(64), "--manifest-sha256", "6".repeat(64), "--bridge-main-sha", "5".repeat(40)];
+  const good = await run(base);
+  assert.equal(good.code, 0, good.stderr);
+  assert.equal(good.output.data.independently_bound.job_digest, "2".repeat(64));
+  // Wrong manifest digest.
+  const bad = await run(base.map((arg, i) => (i === base.indexOf("--manifest-sha256") + 1 ? "0".repeat(64) : arg)));
+  assert.notEqual(bad.code, 0);
+  assert.equal(bad.output.error.code, "LOCALCI_BRIDGE_BUNDLE_MISMATCH");
+  // Wrong bridge main.
+  const bad2 = await run(base.map((arg, i) => (i === base.indexOf("--bridge-main-sha") + 1 ? "9".repeat(40) : arg)));
+  assert.notEqual(bad2.code, 0);
+  // Missing required option.
+  const missing = await run(base.filter((_, i) => i !== base.indexOf("--source-fingerprint") && i !== base.indexOf("--source-fingerprint") + 1));
+  assert.notEqual(missing.code, 0);
+  assert.match(missing.output.error.message, /Missing option --source-fingerprint/u);
+  // Request binding compared independently when supplied.
+  const withReq = await run([...base, "--request-pr-number", "8"]);
+  assert.notEqual(withReq.code, 0);
+  assert.equal(withReq.output.error.code, "LOCALCI_BRIDGE_BUNDLE_MISMATCH");
+});

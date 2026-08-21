@@ -201,3 +201,31 @@ test("result-validate requires the trusted-derived source fingerprint", async ()
   assert.notEqual(bad.code, 0);
   assert.match(bad.output.error.code ?? bad.output.error.message, /SOURCE_FINGERPRINT/u);
 });
+
+test("codex-chat rejects every unsafe job-id case through runtime and a real schema validator", async () => {
+  const { validateBridgeJob } = await import("../../.agents/skills/codex-chat/scripts/lib/localci-bridge.mjs");
+  const Ajv2020 = (await import("ajv/dist/2020.js")).default;
+  const ajv = new Ajv2020({ strict: false, allErrors: true });
+  const jobSchema = JSON.parse(await readFile(path.join(root, ".agents", "skills", "codex-chat", "references", "schemas", "localci-bridge-job-v1.schema.json"), "utf8"));
+  const resultSchema = JSON.parse(await readFile(path.join(root, ".agents", "skills", "codex-chat", "references", "schemas", "localci-bridge-result-v1.schema.json"), "utf8"));
+  assert.equal(jobSchema.properties.id.pattern, "^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$");
+  assert.equal(resultSchema.properties.job_id.pattern, "^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$");
+  const jobValidate = ajv.compile(jobSchema);
+  const resultValidate = ajv.compile(resultSchema);
+  const job = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "job.json"), "utf8"));
+  const result = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "triage-result.json"), "utf8"));
+  const unsafe = [
+    "job_with_underscore", "job.with.dots", "double--hyphen", "trailing-hyphen-",
+    "-leading-hyphen", "UPPER-CASE-JOB", "job-with.lock", "job@{lock",
+    "a".repeat(7), "a".repeat(81),
+  ];
+  const safe = ["a".repeat(8), `${"a".repeat(39)}-${"b".repeat(40)}`];
+  for (const id of unsafe) {
+    assert.throws(() => validateBridgeJob({ ...structuredClone(job), id }, { repository: "xicv/PeoplePlanner", baseSha, defaultBranch: "main" }), (error) => error.code === "LOCALCI_BRIDGE_STRING_INVALID", `runtime must reject ${id}`);
+    assert.equal(jobValidate({ ...job, id }), false, `vendored job schema must reject ${id}`);
+    assert.equal(resultValidate({ ...result, job_id: id }), false, `vendored result schema must reject ${id}`);
+  }
+  for (const id of safe) {
+    assert.equal(jobValidate({ ...job, id }), true, `schema must accept ${id}`);
+  }
+});

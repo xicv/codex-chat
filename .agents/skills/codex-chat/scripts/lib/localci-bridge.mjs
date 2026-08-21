@@ -15,7 +15,10 @@ const JOB_MAX_BYTES = 128 * 1024;
 const RESULT_MAX_BYTES = 256 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const COMMIT_SHA = /^[a-f0-9]{40}$/u;
-const JOB_ID = /^[a-z0-9][a-z0-9._-]{7,79}$/u;
+// The single canonical git-ref-safe job-id contract, byte-for-byte
+// identical to the bridge runtime, job-v1 and result-v1 schemas:
+// ^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$
+const JOB_ID = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/u;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const BRANCH = /^[A-Za-z0-9._/-]+$/u;
 const PATH_PATTERN = /^[A-Za-z0-9._/*?-]+$/u;

@@ -355,6 +355,77 @@ test("bundle-validate computes digests, validates evidence, and rejects the full
   }
 });
 
+test("bundle-validate: every one-representation tamper fails (three-way equality)", async () => {
+  const { mkdtemp, writeFile: wf } = await import("node:fs/promises");
+  const osMod = await import("node:os");
+  const { createHash } = await import("node:crypto");
+  const { canonicalBridgeJson, bridgeSourceFingerprint, validateBridgeJobFile, validateBridgeResult } = await import("../../.agents/skills/codex-chat/scripts/lib/localci-bridge.mjs");
+  const directory = await mkdtemp(path.join(osMod.tmpdir(), "cc3way-"));
+  const triageJobPath = path.join(root, "test", "fixtures", "localci-bridge", "triage-job.json");
+  const triageJob = JSON.parse(await readFile(triageJobPath, "utf8"));
+  const digestOf = (v) => createHash("sha256").update(canonicalBridgeJson(v)).digest("hex");
+  const jobDigest = digestOf(triageJob);
+  const sourceFp = bridgeSourceFingerprint(triageJob.source);
+  const build = async () => {
+    const result = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "triage-result.json"), "utf8"));
+    void validateBridgeJobFile; void validateBridgeResult;
+    result.job_fingerprint = jobDigest;
+    result.source_fingerprint = sourceFp;
+    result.request_binding = { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) };
+    result.bridge_binding = { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) };
+    const bundle = {
+      schema: "localci-bridge/result-bundle/v1", job_id: triageJob.id, result, result_sha256: null,
+      result_meta: { schema: "localci-bridge/result-meta/v1", job_id: triageJob.id, job_digest: jobDigest, source_fingerprint: sourceFp, fencing_token: 3, result_sha256: null },
+      source_fingerprint: sourceFp, job_digest: jobDigest,
+      request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
+      bridge_authority_binding: { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) },
+      agent_execution_receipt: { job_id: triageJob.id, job_digest: jobDigest, source_fingerprint: sourceFp, fencing_token: 3, result_sha256: null, execution_mode: "codex-read-only" },
+      created_at: new Date().toISOString(), producer: { hostname: "h.local", user: "localcibridge", role: "agent" }, manifest_sha256: null,
+    };
+    const recompute = (v) => {
+      const input = structuredClone(v);
+      delete input.manifest_sha256;
+      v.manifest_sha256 = digestOf(input);
+    };
+    bundle.result_sha256 = digestOf(result);
+    bundle.result_meta.result_sha256 = bundle.result_sha256;
+    bundle.agent_execution_receipt.result_sha256 = bundle.result_sha256;
+    recompute(bundle);
+    return bundle;
+  };
+  const good = await build();
+  const goodPath = path.join(directory, "g.json");
+  await wf(goodPath, JSON.stringify(good, null, 2) + "\n", { mode: 0o600 });
+  const base = ["bundle-validate", "--bundle", goodPath, "--job", triageJobPath, "--job-digest", jobDigest, "--source-fingerprint", sourceFp, "--result-sha256", good.result_sha256, "--manifest-sha256", good.manifest_sha256, "--request-pr-number", "7", "--request-head-sha", "a".repeat(40), "--request-file-sha256", "4".repeat(64), "--bridge-main-sha", "5".repeat(40), "--config-blob-sha", "9".repeat(40), "--request-blob-sha", "8".repeat(40), "--agent-user", "localcibridge"];
+  const goodRun = await run(base);
+  assert.equal(goodRun.code, 0, goodRun.stderr);
+  assert.equal(goodRun.output.data.result_validated, true);
+
+  const attempt = async (tamper) => {
+    const v = await build();
+    tamper(v);
+    const input = structuredClone(v);
+    delete input.manifest_sha256;
+    v.manifest_sha256 = digestOf(input);
+    const p = path.join(directory, `t-${Math.random().toString(36).slice(2, 8)}.json`);
+    await wf(p, JSON.stringify(v, null, 2) + "\n", { mode: 0o600 });
+    return run(base.map((arg, i) => (i === base.indexOf("--bundle") + 1 ? p : arg)));
+  };
+  const oneRep = (label, tamper) => attempt(tamper).then((r) => {
+    assert.notEqual(r.code, 0, label);
+  });
+  await oneRep("top-level request pr_number", (v) => { v.request_binding_receipt.pr_number = 8; });
+  await oneRep("embedded request pr_number", (v) => { v.result.request_binding.pr_number = 8; });
+  await oneRep("top-level config blob", (v) => { v.bridge_authority_binding.config_blob_sha = "7".repeat(40); });
+  await oneRep("embedded config blob", (v) => { v.result.bridge_binding.config_blob_sha = "7".repeat(40); });
+  await oneRep("top-level request blob", (v) => { v.bridge_authority_binding.request_blob_sha = "6".repeat(40); });
+  await oneRep("embedded request blob", (v) => { v.result.bridge_binding.request_blob_sha = "6".repeat(40); });
+  await oneRep("metadata schema", (v) => { v.result_meta.schema = "wrong"; });
+  await oneRep("metadata fencing token", (v) => { v.result_meta.fencing_token = 99; });
+  await oneRep("created_at outside window", (v) => { v.created_at = "2020-01-01T00:00:00.000Z"; });
+  await oneRep("hostname non-canonical", (v) => { v.producer.hostname = "bad host!"; });
+});
+
 test("strict JSON parser rejects unicode-escaped duplicate keys and proto keys", async () => {
   const triageJobPath = path.join(root, "test", "fixtures", "localci-bridge", "triage-job.json");
   const { execFileSync } = await import("node:child_process");

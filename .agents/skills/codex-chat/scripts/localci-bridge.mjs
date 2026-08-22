@@ -263,20 +263,51 @@ function bundleValidateCommand(invocation) {
         throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", `bundle.${label} is ${actual}, independently supplied value is ${expected}.`);
       }
     }
-    {
-      const n = parsePrNumber(invocation.options["request-pr-number"]);
-      if (value.request_binding_receipt.pr_number !== n) {
-        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.pr_number differs from the independently supplied value.");
+    // Complete three-way binding equality: independently supplied values are
+    // compared against BOTH the top-level receipts AND the bindings embedded
+    // in result/v1, and the two representations must be equal to each other.
+    const requestFields = [["pr_number", parsePrNumber(invocation.options["request-pr-number"])], ["head_sha", invocation.options["request-head-sha"]], ["request_file_sha256", invocation.options["request-file-sha256"]]];
+    for (const [field, expected] of requestFields) {
+      if (value.request_binding_receipt[field] !== expected) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", `bundle.request_binding_receipt.${field} (${value.request_binding_receipt[field]}) differs from the independently supplied value (${expected}).`);
+      }
+      if (value.result.request_binding?.[field] !== expected) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", `bundle.result.request_binding.${field} (${value.result.request_binding?.[field]}) differs from the independently supplied value (${expected}).`);
+      }
+      if (value.request_binding_receipt[field] !== value.result.request_binding[field]) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", `bundle.request_binding_receipt.${field} differs from the embedded result request binding.`);
       }
     }
-    if (value.request_binding_receipt.head_sha !== invocation.options["request-head-sha"]) {
-      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.head_sha differs.");
-    }
-    if (value.request_binding_receipt.request_file_sha256 !== invocation.options["request-file-sha256"]) {
-      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.request_file_sha256 differs.");
+    const bridgeFields = [["main_sha", invocation.options["bridge-main-sha"]], ["config_blob_sha", invocation.options["config-blob-sha"]], ["request_blob_sha", invocation.options["request-blob-sha"]]];
+    for (const [field, expected] of bridgeFields) {
+      if (value.bridge_authority_binding[field] !== expected) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", `bundle.bridge_authority_binding.${field} (${value.bridge_authority_binding[field]}) differs from the independently supplied value (${expected}).`);
+      }
+      if (value.result.bridge_binding?.[field] !== expected) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", `bundle.result.bridge_binding.${field} (${value.result.bridge_binding?.[field]}) differs from the independently supplied value (${expected}).`);
+      }
+      if (value.bridge_authority_binding[field] !== value.result.bridge_binding[field]) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", `bundle.bridge_authority_binding.${field} differs from the embedded result bridge binding.`);
+      }
     }
     if (value.producer.user !== invocation.options["agent-user"]) {
       throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", `bundle.producer.user (${value.producer.user}) differs from the independently supplied agent user (${invocation.options["agent-user"]}).`);
+    }
+    // Metadata + freshness + hostname + token equality (bridge contract).
+    if (value.result_meta.schema !== "localci-bridge/result-meta/v1") {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "result_meta.schema must be localci-bridge/result-meta/v1.");
+    }
+    if (!Number.isSafeInteger(value.result_meta.fencing_token) || value.result_meta.fencing_token < 1) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "result_meta.fencing_token must be a positive safe integer.");
+    }
+    if (value.result_meta.fencing_token !== value.agent_execution_receipt.fencing_token) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "result_meta.fencing_token differs from the agent execution receipt token.");
+    }
+    if (typeof value.producer.hostname !== "string" || value.producer.hostname.length < 1 || value.producer.hostname.length > 253 || /[^a-zA-Z0-9._-]/u.test(value.producer.hostname)) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "producer.hostname must be a bounded canonical hostname.");
+    }
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/u.test(value.created_at) || Date.parse(value.created_at) > Date.now() + 5 * 60_000 || Date.now() - Date.parse(value.created_at) > 48 * 3600 * 1000) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "created_at must be canonical UTC and within the 48-hour pilot freshness window.");
     }
 
     // 7. The sanitized job source is REQUIRED: run the COMPLETE result
@@ -298,18 +329,7 @@ function bundleValidateCommand(invocation) {
       if (resultVerdict.result.source_fingerprint !== value.source_fingerprint) {
         throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded source_fingerprint differs from the bundle's.");
       }
-      if (value.result.bridge_binding?.config_blob_sha !== invocation.options["config-blob-sha"]) {
-        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded bridge_binding.config_blob_sha differs.");
-      }
-      if (value.result.bridge_binding?.request_blob_sha !== invocation.options["request-blob-sha"]) {
-        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded bridge_binding.request_blob_sha differs.");
-      }
-      if (value.result.request_binding?.head_sha !== invocation.options["request-head-sha"]) {
-        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded request_binding.head_sha differs.");
-      }
-      if (value.result.request_binding?.request_file_sha256 !== invocation.options["request-file-sha256"]) {
-        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded request_binding.request_file_sha256 differs.");
-      }
+
     }
 
     if (resultVerdict === null) {

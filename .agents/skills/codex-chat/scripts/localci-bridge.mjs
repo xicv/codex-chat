@@ -12,8 +12,12 @@ const USAGE = [
   "  codex-chat-localci-bridge result-validate --job <job.json> --result <result.json> --repository <owner/repo> --base-sha <sha>",
   "    --request-pr-number <n> --request-head-sha <sha> --request-file-sha256 <sha> --bridge-main-sha <sha> --config-blob-sha <sha>",
   "    --request-blob-sha <sha> [--default-branch main] [--head-sha <sha>] [--pr-number <number>]",
-  "  codex-chat-localci-bridge bundle-validate --bundle <file> --job-digest <sha> --source-fingerprint <sha> --result-sha256 <sha>",
-  "    --manifest-sha256 <sha> --bridge-main-sha <sha> [--request-pr-number <n>] [--request-head-sha <sha>] [--request-file-sha256 <sha>]",
+  "  codex-chat-localci-bridge bundle-validate --bundle <file> --job <job.json>",
+  "    --job-digest <sha> --source-fingerprint <sha> --result-sha256 <sha> --manifest-sha256 <sha>",
+  "    --request-pr-number <n> --request-head-sha <sha> --request-file-sha256 <sha>",
+  "    --bridge-main-sha <sha> --config-blob-sha <sha> --request-blob-sha <sha> --agent-user <user>",
+  "  (every bundle-validate input above is mandatory; all thirteen bind the",
+  "   evidence independently of the bundle being validated)",
 ].join("\n");
 
 function parse(argv) {
@@ -306,8 +310,19 @@ function bundleValidateCommand(invocation) {
     if (typeof value.producer.hostname !== "string" || value.producer.hostname.length < 1 || value.producer.hostname.length > 253 || /[^a-zA-Z0-9._-]/u.test(value.producer.hostname)) {
       throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "producer.hostname must be a bounded canonical hostname.");
     }
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/u.test(value.created_at) || Date.parse(value.created_at) > Date.now() + 5 * 60_000 || Date.now() - Date.parse(value.created_at) > 48 * 3600 * 1000) {
-      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "created_at must be canonical UTC and within the 48-hour pilot freshness window.");
+    // created_at: parsed exactly once; calendar-invalid values that merely
+    // match the regex (or roll over to another day) are rejected by the
+    // toISOString round-trip, which also mandates the milliseconds.
+    const createdAtMs = Date.parse(value.created_at);
+    if (
+      typeof value.created_at !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value.created_at) ||
+      !Number.isFinite(createdAtMs) ||
+      new Date(createdAtMs).toISOString() !== value.created_at ||
+      createdAtMs > Date.now() + 5 * 60_000 ||
+      Date.now() - createdAtMs > 48 * 3600 * 1000
+    ) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "created_at must be a canonical UTC timestamp (with milliseconds) within the 48-hour pilot freshness window and at most five minutes in the future.");
     }
 
     // 7. The sanitized job source is REQUIRED: run the COMPLETE result

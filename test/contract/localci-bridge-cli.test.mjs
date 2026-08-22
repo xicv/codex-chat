@@ -487,3 +487,107 @@ test("strict JSON parser rejects unicode-escaped duplicate keys and proto keys",
   }
   void good;
 });
+
+test("bundle-validate rejects calendar-invalid created_at values that match the regex shape", async () => {
+  const { mkdtemp, writeFile: wf } = await import("node:fs/promises");
+  const osMod = await import("node:os");
+  const { createHash } = await import("node:crypto");
+  const { canonicalBridgeJson, bridgeSourceFingerprint } = await import("../../.agents/skills/codex-chat/scripts/lib/localci-bridge.mjs");
+  const directory = await mkdtemp(path.join(osMod.tmpdir(), "ccts-"));
+  const triageJobPath = path.join(root, "test", "fixtures", "localci-bridge", "triage-job.json");
+  const triageJob = JSON.parse(await readFile(triageJobPath, "utf8"));
+  const digestOf = (v) => createHash("sha256").update(canonicalBridgeJson(v)).digest("hex");
+  const jobDigest = digestOf(triageJob);
+  const sourceFp = bridgeSourceFingerprint(triageJob.source);
+  const build = async () => {
+    const result = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "triage-result.json"), "utf8"));
+    result.job_fingerprint = jobDigest;
+    result.source_fingerprint = sourceFp;
+    result.request_binding = { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) };
+    result.bridge_binding = { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) };
+    const bundle = {
+      schema: "localci-bridge/result-bundle/v1", job_id: triageJob.id, result, result_sha256: null,
+      result_meta: { schema: "localci-bridge/result-meta/v1", job_id: triageJob.id, job_digest: jobDigest, source_fingerprint: sourceFp, fencing_token: 3, result_sha256: null },
+      source_fingerprint: sourceFp, job_digest: jobDigest,
+      request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
+      bridge_authority_binding: { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) },
+      agent_execution_receipt: { job_id: triageJob.id, job_digest: jobDigest, source_fingerprint: sourceFp, fencing_token: 3, result_sha256: null, execution_mode: "codex-read-only" },
+      created_at: new Date().toISOString(), producer: { hostname: "h.local", user: "localcibridge", role: "agent" }, manifest_sha256: null,
+    };
+    const recompute = (v) => {
+      const input = structuredClone(v);
+      delete input.manifest_sha256;
+      v.manifest_sha256 = digestOf(input);
+    };
+    bundle.result_sha256 = digestOf(result);
+    bundle.result_meta.result_sha256 = bundle.result_sha256;
+    bundle.agent_execution_receipt.result_sha256 = bundle.result_sha256;
+    recompute(bundle);
+    return bundle;
+  };
+  const good = await build();
+  const goodPath = path.join(directory, "g.json");
+  await wf(goodPath, JSON.stringify(good, null, 2) + "\n", { mode: 0o600 });
+  const base = ["bundle-validate", "--bundle", goodPath, "--job", triageJobPath, "--job-digest", jobDigest, "--source-fingerprint", sourceFp, "--result-sha256", good.result_sha256, "--manifest-sha256", good.manifest_sha256, "--request-pr-number", "7", "--request-head-sha", "a".repeat(40), "--request-file-sha256", "4".repeat(64), "--bridge-main-sha", "5".repeat(40), "--config-blob-sha", "9".repeat(40), "--request-blob-sha", "8".repeat(40), "--agent-user", "localcibridge"];
+  // Control: a valid current UTC timestamp passes.
+  const ok = await run(base);
+  assert.equal(ok.code, 0, JSON.stringify(ok.output));
+  assert.equal(ok.output.data.result_validated, true);
+
+  const attempt = async (created_at) => {
+    const v = await build();
+    v.created_at = created_at;
+    const input = structuredClone(v);
+    delete input.manifest_sha256;
+    v.manifest_sha256 = digestOf(input);
+    const p = path.join(directory, `t-${Math.random().toString(36).slice(2, 8)}.json`);
+    await wf(p, JSON.stringify(v, null, 2) + "\n", { mode: 0o600 });
+    return run(base.map((arg, i) => (i === base.indexOf("--bundle") + 1 ? p : arg)));
+  };
+  for (const [label, value] of [
+    ["month 99", "2026-99-22T00:00:00.000Z"],
+    ["day 99", "2026-08-99T00:00:00.000Z"],
+    ["hour 99", "2026-08-22T99:00:00.000Z"],
+    ["invalid leap day", "2026-02-30T00:00:00.000Z"],
+    ["missing milliseconds", new Date().toISOString().replace(/\.\d{3}Z$/u, "Z")],
+    ["expired (older than 48h)", new Date(Date.now() - 49 * 3600 * 1000).toISOString()],
+    ["future (beyond five minutes)", new Date(Date.now() + 10 * 60_000).toISOString()],
+  ]) {
+    const r = await attempt(value);
+    assert.notEqual(r.code, 0, label);
+  }
+});
+
+test("help lists every mandatory bundle-validate input with exact runtime parity", async () => {
+  const help = await run(["help"]);
+  assert.equal(help.code, 0);
+  const usage = typeof help.output.data.usage === "string" ? help.output.data.usage : help.output.data.usage.join("\n");
+  const section = usage.slice(usage.indexOf("bundle-validate"), usage.indexOf("(every bundle-validate"));
+  const listed = new Set([...section.matchAll(/--([a-z0-9-]+)/gu)].map((m) => m[1]));
+  const required = ["bundle", "job", "job-digest", "source-fingerprint", "result-sha256", "manifest-sha256", "request-pr-number", "request-head-sha", "request-file-sha256", "bridge-main-sha", "config-blob-sha", "request-blob-sha", "agent-user"];
+  for (const name of required) {
+    assert.ok(listed.has(name), `help must list --${name}`);
+  }
+  // Runtime parity: the help list is exactly the runtime required set —
+  // omitting any listed option fails naming it, and the full dummy set gets
+  // PAST the option contract (a later error, never a USAGE error).
+  const dummy = (omit) => {
+    const args = ["bundle-validate"];
+    for (const name of required) {
+      if (name === omit) continue;
+      args.push(`--${name}`, `<${name}>`);
+    }
+    return args;
+  };
+  for (const name of required) {
+    const r = await run(dummy(name));
+    assert.notEqual(r.code, 0, name);
+    assert.match(`${r.stderr}${JSON.stringify(r.output)}`, new RegExp(`Missing option --${name.replace(/-/gu, "-")}`, "u"), name);
+  }
+  const unknown = await run(["bundle-validate", "--bundle", "x", "--surprise", "y"]);
+  assert.notEqual(unknown.code, 0);
+  assert.match(`${unknown.stderr}${JSON.stringify(unknown.output)}`, /Unknown option --surprise/u);
+  const full = await run(dummy());
+  assert.notEqual(full.code, 0);
+  assert.doesNotMatch(`${full.stderr}${JSON.stringify(full.output)}`, /Missing option|Unknown option/u);
+});

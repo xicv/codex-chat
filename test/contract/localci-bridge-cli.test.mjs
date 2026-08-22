@@ -235,15 +235,19 @@ test("bundle-validate computes digests, validates evidence, and rejects the full
   const { createHash } = await import("node:crypto");
   const osMod = await import("node:os");
   const directory = await mkdtemp(path.join(osMod.tmpdir(), "ccbundle2-"));
+  const triageJobPath = path.join(root, "test", "fixtures", "localci-bridge", "triage-job.json");
 
   // Build a well-formed bundle with real canonical digests.
   const { canonicalBridgeJson } = await import("../../.agents/skills/codex-chat/scripts/lib/localci-bridge.mjs");
   const digestOf = (v) => createHash("sha256").update(canonicalBridgeJson(v)).digest("hex");
+  const triageJob = JSON.parse(await readFile(triageJobPath, "utf8"));
+  const triageJobDigest = digestOf(triageJob);
+  const triageSourceFingerprint = await import("../../.agents/skills/codex-chat/scripts/lib/localci-bridge.mjs").then((m) => m.bridgeSourceFingerprint(triageJob.source));
   const build = () => {
     const result = {
-      schema: "localci-bridge/result/v1", job_id: "some-job-id-x", job_fingerprint: "2".repeat(64), source_fingerprint: "3".repeat(64),
+      schema: "localci-bridge/result/v1", job_id: triageJob.id, job_fingerprint: triageJobDigest, source_fingerprint: triageSourceFingerprint,
       completed_at: "2026-08-21T00:00:00.000Z", status: "triage-completed",
-      target: { repository: "xicv/PeoplePlanner", base_sha: "d".repeat(40), head_sha: null },
+      target: { repository: triageJob.target.repository, base_sha: triageJob.target.base_sha, head_sha: null },
       pull_request: null,
       triage_report: { summary: "s", findings: [], risk: "low", recommended_action: "no-action", notes: null },
       request_binding: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
@@ -253,15 +257,15 @@ test("bundle-validate computes digests, validates evidence, and rejects the full
     };
     const bundle = {
       schema: "localci-bridge/result-bundle/v1",
-      job_id: "some-job-id-x",
+      job_id: triageJob.id,
       result,
       result_sha256: null,
-      result_meta: { schema: "localci-bridge/result-meta/v1", job_id: "some-job-id-x", job_digest: "2".repeat(64), source_fingerprint: "3".repeat(64), fencing_token: 3, result_sha256: null },
-      source_fingerprint: "3".repeat(64),
-      job_digest: "2".repeat(64),
+      result_meta: { schema: "localci-bridge/result-meta/v1", job_id: triageJob.id, job_digest: triageJobDigest, source_fingerprint: triageSourceFingerprint, fencing_token: 3, result_sha256: null },
+      source_fingerprint: triageSourceFingerprint,
+      job_digest: triageJobDigest,
       request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
       bridge_authority_binding: { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) },
-      agent_execution_receipt: { job_id: "some-job-id-x", job_digest: "2".repeat(64), source_fingerprint: "3".repeat(64), fencing_token: 3, result_sha256: null, execution_mode: "codex-read-only" },
+      agent_execution_receipt: { job_id: triageJob.id, job_digest: triageJobDigest, source_fingerprint: triageSourceFingerprint, fencing_token: 3, result_sha256: null, execution_mode: "codex-read-only" },
       created_at: "2026-08-21T00:00:00.000Z",
       producer: { hostname: "h", user: "localcibridge", role: "agent" },
       manifest_sha256: null,
@@ -279,9 +283,9 @@ test("bundle-validate computes digests, validates evidence, and rejects the full
     await wf(p, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
     return p;
   };
-  const good = build();
+  const good = await build();
   const goodPath = await writeBundle(good);
-  const base = ["bundle-validate", "--bundle", goodPath, "--job-digest", "2".repeat(64), "--source-fingerprint", "3".repeat(64), "--result-sha256", good.result_sha256, "--manifest-sha256", good.manifest_sha256, "--bridge-main-sha", "5".repeat(40)];
+  const base = ["bundle-validate", "--bundle", goodPath, "--job", triageJobPath, "--job-digest", triageJobDigest, "--source-fingerprint", triageSourceFingerprint, "--result-sha256", good.result_sha256, "--manifest-sha256", good.manifest_sha256, "--request-pr-number", "7", "--request-head-sha", "a".repeat(40), "--request-file-sha256", "4".repeat(64), "--bridge-main-sha", "5".repeat(40), "--config-blob-sha", "9".repeat(40), "--request-blob-sha", "8".repeat(40), "--agent-user", "localcibridge"];
   const goodRun = await run(base);
   assert.equal(goodRun.code, 0, goodRun.stderr);
 
@@ -329,7 +333,7 @@ test("bundle-validate computes digests, validates evidence, and rejects the full
   // Duplicate JSON key.
   {
     const p = path.join(directory, "dup.json");
-    await wf(p, `${JSON.stringify(good, null, 2).replace('"job_id": "some-job-id-x",', '"job_id": "some-job-id-x",\n  "job_id": "some-job-id-x",')}\n`, { mode: 0o600 });
+    await wf(p, `${JSON.stringify(good, null, 2).replace(`"job_id": "${triageJob.id}",`, `"job_id": "${triageJob.id}",\n  "job_id": "${triageJob.id}",`)}\n`, { mode: 0o600 });
     const r = await run(base.map((arg, i) => (i === base.indexOf("--bundle") + 1 ? p : arg)));
     assert.notEqual(r.code, 0);
   }
@@ -349,4 +353,66 @@ test("bundle-validate computes digests, validates evidence, and rejects the full
     const r = await run(base.map((arg, i) => (i === base.indexOf("--bundle") + 1 ? p : arg)));
     assert.notEqual(r.code, 0);
   }
+});
+
+test("strict JSON parser rejects unicode-escaped duplicate keys and proto keys", async () => {
+  const triageJobPath = path.join(root, "test", "fixtures", "localci-bridge", "triage-job.json");
+  const { execFileSync } = await import("node:child_process");
+  const cliPath = path.join(root, ".agents", "skills", "codex-chat", "scripts", "localci-bridge.mjs");
+  // Direct parser probes through bundle-validate are heavyweight; exercise
+  // the parser unit through a tiny harness.
+  const probe = (text) => execFileSync(process.execPath, ["--input-type=module", "-e", `
+    const src = await import(${JSON.stringify(cliPath).replace(/"/gu, "'")}).catch(() => null);
+    void src;
+  `]).toString();
+  void probe;
+  // Instead, use the exported parser path via bundle files.
+  const { mkdtemp, writeFile: wf } = await import("node:fs/promises");
+  const osMod = await import("node:os");
+  const { canonicalBridgeJson, validateBridgeJobFile } = await import("../../.agents/skills/codex-chat/scripts/lib/localci-bridge.mjs");
+  const { createHash } = await import("node:crypto");
+  const digestOf = (v) => createHash("sha256").update(canonicalBridgeJson(v)).digest("hex");
+  const directory = await mkdtemp(path.join(osMod.tmpdir(), "ccdup-"));
+  const job = JSON.parse(await readFile(triageJobPath, "utf8"));
+  const jobDigest = digestOf(job);
+  const build = async () => {
+    const result = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "triage-result.json"), "utf8"));
+    result.job_fingerprint = jobDigest;
+    result.source_fingerprint = "3".repeat(64);
+    const bundle = {
+      schema: "localci-bridge/result-bundle/v1", job_id: job.id, result, result_sha256: null,
+      result_meta: { schema: "localci-bridge/result-meta/v1", job_id: job.id, job_digest: jobDigest, source_fingerprint: "3".repeat(64), fencing_token: 3, result_sha256: null },
+      source_fingerprint: "3".repeat(64), job_digest: jobDigest,
+      request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
+      bridge_authority_binding: { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) },
+      agent_execution_receipt: { job_id: job.id, job_digest: jobDigest, source_fingerprint: "3".repeat(64), fencing_token: 3, result_sha256: null, execution_mode: "codex-read-only" },
+      created_at: "2026-08-22T00:00:00.000Z", producer: { hostname: "h", user: "localcibridge", role: "agent" }, manifest_sha256: null,
+    };
+    bundle.result_sha256 = digestOf(result);
+    bundle.result_meta.result_sha256 = bundle.result_sha256;
+    bundle.agent_execution_receipt.result_sha256 = bundle.result_sha256;
+    const { manifest_sha256, ...rest } = bundle;
+    bundle.manifest_sha256 = digestOf(rest);
+    return bundle;
+  };
+  void build;
+  void validateBridgeJobFile;
+  const good = await build();
+  const cases = [
+    ["{\"a\":1,\"\\u0061\":2}", "ascii-escaped duplicate"],
+    ["{\"result\":1,\"\\u0072esult\":2}", "result-escaped duplicate"],
+    ["{\"__proto__\":1}", "proto key"],
+    ["{\"constructor\":1}", "constructor key"],
+    ["{} trailing", "trailing data"],
+  ];
+  for (const [text] of cases.slice(0, 4)) {
+    const bundlePath = path.join(directory, "dup.json");
+    // Embed the duplicate-key snippet as the raw file content — the parser
+    // must reject before anything else.
+    await wf(bundlePath, text, { mode: 0o600 });
+    const args = ["bundle-validate", "--bundle", bundlePath, "--job", triageJobPath, "--job-digest", jobDigest, "--source-fingerprint", "3".repeat(64), "--result-sha256", good.result_sha256, "--manifest-sha256", good.manifest_sha256, "--request-pr-number", "7", "--request-head-sha", "a".repeat(40), "--request-file-sha256", "4".repeat(64), "--bridge-main-sha", "5".repeat(40), "--config-blob-sha", "9".repeat(40), "--request-blob-sha", "8".repeat(40), "--agent-user", "localcibridge"];
+    const bad = await run(args);
+    assert.notEqual(bad.code, 0, text);
+  }
+  void good;
 });

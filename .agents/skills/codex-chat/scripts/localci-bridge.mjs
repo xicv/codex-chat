@@ -189,8 +189,8 @@ main().catch((error) => {
 // OBSERVED artifacts; the expected digests come from the reviewer's own
 // queries); nothing is derived from the bundle itself.
 function bundleValidateCommand(invocation) {
-  const required = ["bundle", "job-digest", "source-fingerprint", "result-sha256", "manifest-sha256", "bridge-main-sha"];
-  const optional = ["request-pr-number", "request-head-sha", "request-file-sha256", "job", "config-blob-sha", "request-blob-sha"];
+  const required = ["bundle", "job", "job-digest", "source-fingerprint", "result-sha256", "manifest-sha256", "request-pr-number", "request-head-sha", "request-file-sha256", "bridge-main-sha", "config-blob-sha", "request-blob-sha", "agent-user"];
+  const optional = [];
   contractStrict(invocation.options, required, optional);
   return async () => {
     const { validateBridgeJobFile, validateBridgeResult, canonicalBridgeJson } = await import("./lib/localci-bridge.mjs");
@@ -263,23 +263,26 @@ function bundleValidateCommand(invocation) {
         throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", `bundle.${label} is ${actual}, independently supplied value is ${expected}.`);
       }
     }
-    if (invocation.options["request-pr-number"]) {
+    {
       const n = parsePrNumber(invocation.options["request-pr-number"]);
       if (value.request_binding_receipt.pr_number !== n) {
         throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.pr_number differs from the independently supplied value.");
       }
     }
-    if (invocation.options["request-head-sha"] && value.request_binding_receipt.head_sha !== invocation.options["request-head-sha"]) {
+    if (value.request_binding_receipt.head_sha !== invocation.options["request-head-sha"]) {
       throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.head_sha differs.");
     }
-    if (invocation.options["request-file-sha256"] && value.request_binding_receipt.request_file_sha256 !== invocation.options["request-file-sha256"]) {
+    if (value.request_binding_receipt.request_file_sha256 !== invocation.options["request-file-sha256"]) {
       throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "bundle.request_binding_receipt.request_file_sha256 differs.");
     }
+    if (value.producer.user !== invocation.options["agent-user"]) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", `bundle.producer.user (${value.producer.user}) differs from the independently supplied agent user (${invocation.options["agent-user"]}).`);
+    }
 
-    // 7. When the sanitized job source is supplied, run the COMPLETE result
+    // 7. The sanitized job source is REQUIRED: run the COMPLETE result
     // validator and verify the source fingerprint + embedded bindings.
     let resultVerdict = null;
-    if (invocation.options.job) {
+    {
       const job = await validateBridgeJobFile(invocation.options.job, {
         repository: value.result.target?.repository ?? "xicv/PeoplePlanner",
         baseSha: value.result.target?.base_sha,
@@ -295,14 +298,23 @@ function bundleValidateCommand(invocation) {
       if (resultVerdict.result.source_fingerprint !== value.source_fingerprint) {
         throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded source_fingerprint differs from the bundle's.");
       }
-      if (invocation.options["config-blob-sha"] && value.result.bridge_binding?.config_blob_sha !== invocation.options["config-blob-sha"]) {
+      if (value.result.bridge_binding?.config_blob_sha !== invocation.options["config-blob-sha"]) {
         throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded bridge_binding.config_blob_sha differs.");
       }
-      if (invocation.options["request-blob-sha"] && value.result.bridge_binding?.request_blob_sha !== invocation.options["request-blob-sha"]) {
+      if (value.result.bridge_binding?.request_blob_sha !== invocation.options["request-blob-sha"]) {
         throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded bridge_binding.request_blob_sha differs.");
+      }
+      if (value.result.request_binding?.head_sha !== invocation.options["request-head-sha"]) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded request_binding.head_sha differs.");
+      }
+      if (value.result.request_binding?.request_file_sha256 !== invocation.options["request-file-sha256"]) {
+        throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_MISMATCH", "The result's embedded request_binding.request_file_sha256 differs.");
       }
     }
 
+    if (resultVerdict === null) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "The complete result validator did not run.");
+    }
     return {
       schema: "codex-chat/cli/v1",
       ok: true,
@@ -333,37 +345,44 @@ function assertExactKeys(value, keys, label) {
   }
 }
 
+// Strict JSON parser: decodes escape sequences BEFORE duplicate-key
+// comparison, rejects duplicate decoded keys, rejects __proto__/constructor/
+// prototype, rejects trailing data, and uses the platform's number/Unicode
+// decoding (reproduces the bridge strict parser semantics).
 function parseStrictJsonNoDuplicates(text) {
-  const seen = new Set();
-  const reviver = (key) => {
-    if (key !== "" && seen.has(key)) throw new Error(`duplicate key ${JSON.stringify(key)}`);
-    seen.add(key);
-    return undefined;
-  };
-  void reviver;
-  // JSON.parse revivers cannot see sibling duplicates reliably; use a
-  // lightweight scanner over the raw text for duplicate keys per object.
-  const stack = [new Set()];
-  let depth = 0;
+  // First: JSON.parse for full syntax/number/Unicode validation (it throws
+  // on trailing data automatically when wrapped).
+  const value = JSON.parse(text, (key, v) => {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      throw new SyntaxError(`forbidden key ${JSON.stringify(key)}`);
+    }
+    return v;
+  });
+  // Second: raw-scan for duplicate DECODED keys per object depth.
+  const stack = [new Map()];
   let i = 0;
+  const decode = (raw) => {
+    try { return JSON.parse(`"${raw}"`); } catch { return raw; }
+  };
   while (i < text.length) {
     const ch = text[i];
-    if (ch === "{") { depth += 1; stack.push(new Set()); i += 1; continue; }
-    if (ch === "}") { depth -= 1; stack.pop(); i += 1; continue; }
+    if (ch === "{") { stack.push(new Map()); i += 1; continue; }
+    if (ch === "}") { stack.pop(); i += 1; continue; }
     if (ch === '"') {
       let j = i + 1;
-      let key = "";
+      let raw = "";
       while (j < text.length && text[j] !== '"') {
-        if (text[j] === "\\") { key += text[j + 1]; j += 2; continue; }
-        key += text[j];
+        if (text[j] === "\\") { raw += text[j] + (text[j + 1] ?? ""); j += 2; continue; }
+        raw += text[j];
         j += 1;
       }
-      // Only treat as a KEY when followed by ':' at this object level.
       let k = j + 1;
       while (k < text.length && /\s/.test(text[k])) k += 1;
       if (k < text.length && text[k] === ":") {
-        if (stack[depth].has(key)) throw new Error(`duplicate key ${JSON.stringify(key)}`);
-        stack[depth].add(key);
+        const decoded = decode(raw);
+        const frame = stack[stack.length - 1];
+        if (frame.has(decoded)) throw new Error(`duplicate decoded key ${JSON.stringify(decoded)}`);
+        frame.set(decoded, true);
         i = k + 1;
         continue;
       }
@@ -372,7 +391,11 @@ function parseStrictJsonNoDuplicates(text) {
     }
     i += 1;
   }
-  return JSON.parse(text);
+  return value;
+}
+
+function legacyParseStrictJsonNoDuplicates(text) {
+  return parseStrictJsonNoDuplicates(text);
 }
 
 function contractStrict(options, required, optional = []) {

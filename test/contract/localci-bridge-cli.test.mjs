@@ -246,7 +246,7 @@ test("bundle-validate computes digests, validates evidence, and rejects the full
   const build = () => {
     const result = {
       schema: "localci-bridge/result/v1", job_id: triageJob.id, job_fingerprint: triageJobDigest, source_fingerprint: triageSourceFingerprint,
-      completed_at: "2026-08-21T00:00:00.000Z", status: "triage-completed",
+      completed_at: new Date().toISOString(), status: "triage-completed",
       target: { repository: triageJob.target.repository, base_sha: triageJob.target.base_sha, head_sha: null },
       pull_request: null,
       triage_report: { summary: "s", findings: [], risk: "low", recommended_action: "no-action", notes: null },
@@ -266,7 +266,7 @@ test("bundle-validate computes digests, validates evidence, and rejects the full
       request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
       bridge_authority_binding: { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) },
       agent_execution_receipt: { job_id: triageJob.id, job_digest: triageJobDigest, source_fingerprint: triageSourceFingerprint, fencing_token: 3, result_sha256: null, execution_mode: "codex-read-only" },
-      created_at: "2026-08-21T00:00:00.000Z",
+      created_at: result.completed_at,
       producer: { hostname: "h", user: "localcibridge", role: "agent" },
       manifest_sha256: null,
     };
@@ -368,6 +368,7 @@ test("bundle-validate: every one-representation tamper fails (three-way equality
   const sourceFp = bridgeSourceFingerprint(triageJob.source);
   const build = async () => {
     const result = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "triage-result.json"), "utf8"));
+    result.completed_at = new Date().toISOString();
     void validateBridgeJobFile; void validateBridgeResult;
     result.job_fingerprint = jobDigest;
     result.source_fingerprint = sourceFp;
@@ -380,7 +381,7 @@ test("bundle-validate: every one-representation tamper fails (three-way equality
       request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
       bridge_authority_binding: { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) },
       agent_execution_receipt: { job_id: triageJob.id, job_digest: jobDigest, source_fingerprint: sourceFp, fencing_token: 3, result_sha256: null, execution_mode: "codex-read-only" },
-      created_at: new Date().toISOString(), producer: { hostname: "h.local", user: "localcibridge", role: "agent" }, manifest_sha256: null,
+      created_at: result.completed_at, producer: { hostname: "h.local", user: "localcibridge", role: "agent" }, manifest_sha256: null,
     };
     const recompute = (v) => {
       const input = structuredClone(v);
@@ -448,6 +449,7 @@ test("strict JSON parser rejects unicode-escaped duplicate keys and proto keys",
   const jobDigest = digestOf(job);
   const build = async () => {
     const result = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "triage-result.json"), "utf8"));
+    result.completed_at = new Date().toISOString();
     result.job_fingerprint = jobDigest;
     result.source_fingerprint = "3".repeat(64);
     const bundle = {
@@ -457,7 +459,7 @@ test("strict JSON parser rejects unicode-escaped duplicate keys and proto keys",
       request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
       bridge_authority_binding: { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) },
       agent_execution_receipt: { job_id: job.id, job_digest: jobDigest, source_fingerprint: "3".repeat(64), fencing_token: 3, result_sha256: null, execution_mode: "codex-read-only" },
-      created_at: "2026-08-22T00:00:00.000Z", producer: { hostname: "h", user: "localcibridge", role: "agent" }, manifest_sha256: null,
+      created_at: result.completed_at, producer: { hostname: "h", user: "localcibridge", role: "agent" }, manifest_sha256: null,
     };
     bundle.result_sha256 = digestOf(result);
     bundle.result_meta.result_sha256 = bundle.result_sha256;
@@ -501,6 +503,7 @@ test("bundle-validate rejects calendar-invalid created_at values that match the 
   const sourceFp = bridgeSourceFingerprint(triageJob.source);
   const build = async () => {
     const result = JSON.parse(await readFile(path.join(root, "test", "fixtures", "localci-bridge", "triage-result.json"), "utf8"));
+    result.completed_at = new Date().toISOString();
     result.job_fingerprint = jobDigest;
     result.source_fingerprint = sourceFp;
     result.request_binding = { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) };
@@ -512,7 +515,7 @@ test("bundle-validate rejects calendar-invalid created_at values that match the 
       request_binding_receipt: { pr_number: 7, head_sha: "a".repeat(40), request_file_sha256: "4".repeat(64) },
       bridge_authority_binding: { main_sha: "5".repeat(40), config_blob_sha: "9".repeat(40), request_blob_sha: "8".repeat(40) },
       agent_execution_receipt: { job_id: triageJob.id, job_digest: jobDigest, source_fingerprint: sourceFp, fencing_token: 3, result_sha256: null, execution_mode: "codex-read-only" },
-      created_at: new Date().toISOString(), producer: { hostname: "h.local", user: "localcibridge", role: "agent" }, manifest_sha256: null,
+      created_at: result.completed_at, producer: { hostname: "h.local", user: "localcibridge", role: "agent" }, manifest_sha256: null,
     };
     const recompute = (v) => {
       const input = structuredClone(v);
@@ -544,6 +547,31 @@ test("bundle-validate rejects calendar-invalid created_at values that match the 
     await wf(p, JSON.stringify(v, null, 2) + "\n", { mode: 0o600 });
     return run(base.map((arg, i) => (i === base.indexOf("--bundle") + 1 ? p : arg)));
   };
+  // Freshness is bound to the result: created_at must EQUAL the embedded
+  // result.completed_at.
+  {
+    const v = await build();
+    v.result.completed_at = "2020-01-01T00:00:00.000Z"; // old result, fresh wrapper
+    const input = structuredClone(v);
+    delete input.manifest_sha256;
+    v.manifest_sha256 = digestOf(input);
+    const p = path.join(directory, "eq-stale.json");
+    await wf(p, JSON.stringify(v, null, 2) + "\n", { mode: 0o600 });
+    const r = await run(base.map((arg, i) => (i === base.indexOf("--bundle") + 1 ? p : arg)));
+    assert.notEqual(r.code, 0, "stale result with fresh wrapper");
+  }
+  {
+    const v = await build();
+    v.created_at = new Date(Date.now() - 60_000).toISOString(); // different fresh timestamp
+    const input = structuredClone(v);
+    delete input.manifest_sha256;
+    v.manifest_sha256 = digestOf(input);
+    const p = path.join(directory, "eq-diff.json");
+    await wf(p, JSON.stringify(v, null, 2) + "\n", { mode: 0o600 });
+    const r = await run(base.map((arg, i) => (i === base.indexOf("--bundle") + 1 ? p : arg)));
+    assert.notEqual(r.code, 0, "different fresh timestamp");
+  }
+
   for (const [label, value] of [
     ["month 99", "2026-99-22T00:00:00.000Z"],
     ["day 99", "2026-08-99T00:00:00.000Z"],

@@ -313,6 +313,12 @@ function bundleValidateCommand(invocation) {
     // created_at: parsed exactly once; calendar-invalid values that merely
     // match the regex (or roll over to another day) are rejected by the
     // toISOString round-trip, which also mandates the milliseconds.
+    // Freshness is bound to the RESULT: created_at must equal the embedded
+    // result.completed_at exactly — a fresh wrapper cannot revive a stale
+    // result, and a different fresh timestamp is not the export timestamp.
+    if (typeof value.result?.completed_at !== "string" || value.created_at !== value.result.completed_at) {
+      throw new CodexChatError("LOCALCI_BRIDGE_BUNDLE_INVALID", "created_at must equal result.completed_at (the stable export timestamp).");
+    }
     const createdAtMs = Date.parse(value.created_at);
     if (
       typeof value.created_at !== "string" ||

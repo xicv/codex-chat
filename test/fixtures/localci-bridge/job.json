@@ -1,0 +1,38 @@
+{
+  "schema": "localci-bridge/job/v1",
+  "id": "pp-20260819-shift-filter",
+  "created_at": "2026-08-19T00:40:00.000Z",
+  "source": {
+    "kind": "gmail",
+    "subject": "RTR small bug: shift filter resets",
+    "sender_alias": "mss security product team",
+    "received_at": "2026-08-19T00:30:00.000Z",
+    "summary": "The selected shift filter resets after returning from shift details. Preserve the existing filter for the current browser session."
+  },
+  "target": {
+    "repository": "xicv/PeoplePlanner",
+    "base_sha": "d9fe027113486bc31d311d7c7dfffea4749bced4",
+    "default_branch": "main"
+  },
+  "task_type": "draft-pr",
+  "mode": "workspace-write",
+  "priority": "bug",
+  "instructions": "Reproduce the filter reset with a focused test, preserve the existing shift-list filter when navigating to and from shift details, and keep the change within the current Inertia/Vue patterns.",
+  "acceptance_criteria": [
+    "A selected shift-list filter remains selected after opening a shift and returning to the list.",
+    "A focused regression test fails before the fix and passes afterward.",
+    "No authorization, production, deployment, workflow, or database behavior changes."
+  ],
+  "allowed_paths": [
+    "src/resources/js/Pages/Shifts/**",
+    "src/tests/**"
+  ],
+  "verification_profile": "peopleplanner-readonly-triage",
+  "timeout_minutes": 90,
+  "publish": {
+    "target_draft_pr": true,
+    "merge": false,
+    "deploy": false,
+    "release": false
+  }
+}

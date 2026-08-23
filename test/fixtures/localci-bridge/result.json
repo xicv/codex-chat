@@ -1,0 +1,59 @@
+{
+  "schema": "localci-bridge/result/v1",
+  "job_id": "pp-20260819-shift-filter",
+  "job_fingerprint": "248fe0946884dd9e81f4267c6f30b398131ca52f1db2e8e5fab596f25f6b7a84",
+  "completed_at": "2026-08-19T02:30:00.000Z",
+  "status": "draft-pr-open",
+  "target": {
+    "repository": "xicv/PeoplePlanner",
+    "base_sha": "d9fe027113486bc31d311d7c7dfffea4749bced4",
+    "head_sha": "1111111111111111111111111111111111111111"
+  },
+  "pull_request": {
+    "number": 123,
+    "url": "https://github.com/xicv/PeoplePlanner/pull/123",
+    "draft": true,
+    "mergeability": "unknown",
+    "ci_state": "pending"
+  },
+  "triage_report": null,
+  "request_binding": {
+    "pr_number": 3,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "request_file_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "bridge_binding": {
+    "main_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "config_blob_sha": "dddddddddddddddddddddddddddddddddddddddd",
+    "request_blob_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "verification": [
+    {
+      "name": "focused regression",
+      "status": "success",
+      "evidence": "Focused test passed on the reported head SHA.",
+      "github_run_id": 9876543210,
+      "github_job_id": 98765432101,
+      "runner_name": "mac-local-ci-pp-e2e",
+      "artifact_sha256": "5a674c1d1f8d2a59a5c3c1a0e1d2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0"
+    },
+    {
+      "name": "PeoplePlanner quality",
+      "status": "pending",
+      "evidence": "Exact-head LocalCI workflow is pending.",
+      "github_run_id": null,
+      "github_job_id": null,
+      "runner_name": null,
+      "artifact_sha256": null
+    }
+  ],
+  "release_recommendation": "needs-new-mac-review",
+  "safety": {
+    "gmail_mutated": false,
+    "merged": false,
+    "deployed": false,
+    "released": false,
+    "production_accessed": false
+  },
+  "source_fingerprint": "00ddc6f872032f28865017892a8e697dbb0374908141ae8318ad57f6c5a2fc1b"
+}
